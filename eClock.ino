@@ -3,6 +3,9 @@
 #include <ESP8266WebServer.h>
 #include <WiFiManager.h>         // https://github.com/tzapu/WiFiManager
 
+#include "NTPClient.h"
+#include "WiFiUdp.h"
+
 // Set web server port number to 80
 WiFiServer server(80);
 
@@ -17,6 +20,50 @@ const int output2 = 2;
 
 String currentLine = "";                // make a String to hold incoming data from the client
 
+/* NTP Server Time */
+/*
+  You need to set offsettime for me it is 19800
+  Because my timezone is utc+5:30 so
+  UTC +5:30=5.5*60*60=19800
+  UTC+1=1*60*60=3600
+  CALCULATE your timezone and edit it and then upload the code.
+*/
+const long utcOffsetInSeconds = 19800;
+char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+/* Define NTP Client to get time */
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
+
+void InitTimeClient()
+{
+  timeClient.begin();
+
+  // Set offset time in seconds to adjust for your timezone, for example:
+  // GMT +1 = 3600
+  // GMT +8 = 28800
+  // GMT -1 = -3600
+  // GMT 0 = 0
+  // timeClient.setTimeOffset(0);
+}
+
+void UpdateTimeClient()
+{
+  timeClient.update();  
+}
+
+void DisplayTimeClient()
+{
+  Serial.print(daysOfTheWeek[timeClient.getDay()]);
+  Serial.print(", ");
+  Serial.print(timeClient.getHours());
+  Serial.print(":");
+  Serial.print(timeClient.getMinutes());
+  Serial.print(":");
+  Serial.println(timeClient.getSeconds());
+  //Serial.println(timeClient.getFormattedTime());
+
+  delay(1000);
+}
 void setup() {
   Serial.println("Enter setup.\n");
   Serial.begin(115200);
@@ -46,8 +93,9 @@ void setup() {
   
   // if you get here you have connected to the WiFi
   Serial.println("Connected.");
-  Serial.println("\n\nExit setup.");
   server.begin();
+
+  InitTimeClient();
 }
 
 bool isClientConnected(WiFiClient client)
@@ -132,6 +180,8 @@ void loop(){
 
     while (isClientConnected(client)) {            // loop while the client's connected
       checkForControlFromClient(client);
+      UpdateTimeClient();
+      DisplayTimeClient();
     }
     // Clear the header variable
     header = "";
@@ -141,4 +191,10 @@ void loop(){
     Serial.println("");
   }
 }
+
+
+/* Ref link */
+// [1] https://randomnerdtutorials.com/esp8266-nodemcu-date-time-ntp-client-server-arduino/
+// [2] https://www.instructables.com/Getting-Time-From-Internet-Using-ESP8266-NTP-Clock/
+// [3] https://tttapa.github.io/ESP8266/Chap15%20-%20NTP.html
 
