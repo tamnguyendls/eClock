@@ -1,0 +1,34 @@
+* E-CLOCK product requirement *
+
+[REQ_1] eClock shall connect to wifi dinamically
+
+[REQ_2] eClock shall get time from NTP server
+
+[REQ_3] eClock must display time of format HH:MM to LED-7-Seg 4 digits
+
+[REQ_4] eClock shall update time from NTP server every 60s
+
+[REQ_5] eClock shall load time from RTC when lost wifi connection
+
+[REQ_6] eClock shall display "--:--" in case no input of time
+
+[ERQ_7] eClock must have Humidity & Temperature Sensor
+
+[ERQ_8] eClock must have sensor of Ultrasonic Sensor
+
+[ERQ_9] eClock must have sensor of Ultrasonic Sensor
+
+[ERQ_10] eClock must have sensor of Light Sensor
+
+[ERQ_11] eClock must have RTC hardware
+
+[ERQ_12] eClock shall update time from NTP server to RTC every 1st day of a month
+
+[REQ_13] eClock shall update humid and temperature from Sensor every 5 mins
+
+[REQ_14] eClock shall have ability to change display brightness upon to environment brightness
+
+[REQ_15] eClock shall have ability to configure wifi by local server
+
+
+
