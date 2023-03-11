@@ -28,7 +28,9 @@
 
 [REQ_14] eClock shall have ability to change display brightness upon to environment brightness
 
-[REQ_15] eClock shall have ability to configure wifi by local server
+[REQ_15] Time of eClock to change display brightness shall be within 5 seconds
+
+[REQ_16] eClock shall have ability to configure wifi by local server
 
 
 
