@@ -2,9 +2,9 @@
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <WiFiManager.h>         // https://github.com/tzapu/WiFiManager
-
-#include "NTPClient.h"
-#include "WiFiUdp.h"
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#include <TM1637Display.h>
 
 // Set web server port number to 80
 WiFiServer server(80);
@@ -20,7 +20,7 @@ const int output2 = 2;
 
 String currentLine = "";                // make a String to hold incoming data from the client
 
-/* NTP Server Time */
+/* NTP Server Time ============================================================================ */
 /*
   You need to set offsettime for me it is 19800
   Because my timezone is utc+5:30 so
@@ -33,6 +33,70 @@ char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursd
 /* Define NTP Client to get time */
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
+
+/* 7-SEG LED 4-DIGITS - TM1637 ================================================================ */
+// Define the connections pins
+const int CLK = D6; //Set the CLK pin connection to the display
+const int DIO = D5; //Set the DIO pin connection to the display
+
+// Create a display object of type TM1637Display
+TM1637Display display(CLK, DIO);
+
+// Create an array that turns all segments ON
+const uint8_t allON[] = {0xff, 0xff, 0xff, 0xff};
+
+// Create an array that turns all segments OFF
+const uint8_t allOFF[] = {0x00, 0x00, 0x00, 0x00};
+
+// Create an array that sets individual segments per digit to display the word "dOnE"
+const uint8_t done[] = {
+  SEG_B | SEG_C | SEG_D | SEG_E | SEG_G,           // d
+  SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,   // O
+  SEG_C | SEG_E | SEG_G,                           // n
+  SEG_A | SEG_D | SEG_E | SEG_F | SEG_G            // E
+};
+
+// Create degree celsius symbol
+const uint8_t celsius[] = {
+  SEG_A | SEG_B | SEG_F | SEG_G,  // Degree symbol
+  SEG_A | SEG_D | SEG_E | SEG_F   // C
+};
+
+#define BRNS_VVHIGH 1000 // 1023 (10-bit ADC)
+#define BRNS_VHIGH  854
+#define BRNS_HIGH    708
+#define BRNS_NRML    562
+#define BRNS_LOW     416
+#define BRNS_VLOW 270
+#define BRNS_VVLOW 124
+#define BRNS_VV_HIGH 1000
+
+unsigned int ReadEnvBrightness()
+{
+  // return ADC value
+}
+
+void AdaptDisplayBrightness()
+{
+  // env_brightness = ReadEnvBrightness();
+  /*
+  if (env_brightness >= BRNS_VVHIGH) {
+    // 1
+  } else if (env_brightness < BRNS_VVHIGH) && (env_brightness >= BRNS_VHIGH) {
+    // 2
+  } else if (env_brightness < BRNS_VHIGH) && (env_brightness >= BRNS_HIGH) {
+    // 3
+  } else if (env_brightness < BRNS_HIGH) && (env_brightness >= BRNS_NRML) {
+    // 4
+  } else if (env_brightness < BRNS_NRML) && (env_brightness >= BRNS_LOW) {
+    // 5
+  } else if (env_brightness < BRNS_LOW) && (env_brightness >= BRNS_VVLOW) {
+    // 6
+  } else {
+    // 7
+  }
+  */
+}
 
 void InitTimeClient()
 {
@@ -64,6 +128,7 @@ void DisplayTimeClient()
 
   delay(1000);
 }
+
 void setup() {
   Serial.println("Enter setup.\n");
   Serial.begin(115200);
@@ -96,6 +161,10 @@ void setup() {
   server.begin();
 
   InitTimeClient();
+
+  // Display set up
+  display.clear();
+  delay(500);
 }
 
 bool isClientConnected(WiFiClient client)
