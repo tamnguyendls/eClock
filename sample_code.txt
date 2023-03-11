@@ -1,0 +1,97 @@
+// Sample code==========================================================================================
+/*
+my current Arduino project is NTP clock with esp8266 and TM1647 four 7 segment digits display module and LDR for display brightness. 
+it turns WiFi on once a day to let the SDK sync the time
+*/
+
+#include <ESP8266WiFi.h>
+#include <WiFiManager.h>
+#include <TZ.h>
+#include <coredecls.h>                  // settimeofday_cb()
+#include <TM1637Display.h> // author Avishay Orpaz
+
+#define TIME_ZONE TZ_Europe_Bratislava
+
+const byte DISPLAY_DATA_PIN = D1;
+const byte DISPLAY_SCLK_PIN = D2;
+
+TM1637Display display(DISPLAY_SCLK_PIN, DISPLAY_DATA_PIN);
+byte displayData[4];
+
+const uint8_t SEG_JA[] = {
+  SEG_A | SEG_D | SEG_E | SEG_F,   // [
+  SEG_B | SEG_C | SEG_D | SEG_E,   // J
+  SEG_A | SEG_B | SEG_C | SEG_E | SEG_F | SEG_G,   // A
+  SEG_A | SEG_B | SEG_C | SEG_D    // ]
+  };
+
+const uint8_t SEG_CONF[] = {
+  SEG_A | SEG_D | SEG_E | SEG_F,   // C
+  SEG_C | SEG_D | SEG_E | SEG_G,   // o
+  SEG_C | SEG_E | SEG_G,           // n
+  SEG_A | SEG_E | SEG_F | SEG_G    // f
+  };
+
+void time_is_set_scheduled() {
+  WiFi.mode(WIFI_OFF);
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  display.setBrightness(7, true);
+  display.setSegments(SEG_JA);
+
+  if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+    display.setSegments(SEG_CONF);
+    WiFiManager wm;
+    wm.autoConnect("NTPClock");
+  }
+  WiFi.persistent(false); // to not store mode changes
+
+  display.setSegments(SEG_JA);
+
+  settimeofday_cb(time_is_set_scheduled);
+  configTime(TIME_ZONE, "pool.ntp.org");
+}
+
+void loop() {
+
+  static unsigned long previousMillis = 0;
+
+  if (millis() - previousMillis > (1000L * 60 * 60 * 24) || !previousMillis) {
+    previousMillis = millis();
+    WiFi.begin();
+  }
+  if (WiFi.isConnected() && millis() - previousMillis > 30000) {
+    WiFi.mode(WIFI_OFF);
+  }
+
+  static uint8_t lastMinute;
+  time_t t = time(nullptr);
+  struct tm* tm = localtime(&t);
+  byte minute = tm->tm_min;
+  byte hour = tm->tm_hour;
+  if (lastMinute != minute) {
+    lastMinute = minute;
+    displayData[0] = (hour < 10) ? 0 : display.encodeDigit(hour / 10);
+    displayData[1] = display.encodeDigit(hour % 10) | 0x80; // with colon
+    displayData[2] = display.encodeDigit(minute / 10);
+    displayData[3] = display.encodeDigit(minute % 10);
+    display.setSegments(displayData);
+  }
+
+  static int lastLDRReading = 1300; // init out of range
+  unsigned a = analogRead(A0);
+  if (abs(a - lastLDRReading) > 30 && displayData[1] != 0) {
+    lastLDRReading = a;
+    byte brightness = map(a, 0, 1024, 1, 7);
+    display.setBrightness(brightness, true);
+    display.setSegments(displayData);
+  }
+
+  delay(1000);
+}
+
+Sample code==========================================================================================
+
