@@ -14,23 +14,21 @@
 
 [ERQ_7] eClock must have Humidity & Temperature Sensor
 
-[ERQ_8] eClock must have sensor of Ultrasonic Sensor
+[ERQ_8] eClock must have Radar sensor (RCWL-0516)
 
-[ERQ_9] eClock must have sensor of Ultrasonic Sensor
+[ERQ_9] eClock must have LDS sensor
 
-[ERQ_10] eClock must have sensor of Light Sensor
+[ERQ_10] eClock must have RTC hardware
 
-[ERQ_11] eClock must have RTC hardware
+[ERQ_11] eClock shall update time from NTP server to RTC every 1st day of a month
 
-[ERQ_12] eClock shall update time from NTP server to RTC every 1st day of a month
+[REQ_12] eClock shall update humid and temperature from Sensor every 5 mins
 
-[REQ_13] eClock shall update humid and temperature from Sensor every 5 mins
+[REQ_13] eClock shall have ability to change display brightness upon to environment brightness
 
-[REQ_14] eClock shall have ability to change display brightness upon to environment brightness
+[REQ_14] Time of eClock to change display brightness shall be within 5 seconds
 
-[REQ_15] Time of eClock to change display brightness shall be within 5 seconds
-
-[REQ_16] eClock shall have ability to configure wifi by local server
+[REQ_15] eClock shall have ability to configure wifi by local server
 
 
 
