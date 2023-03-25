@@ -6,9 +6,18 @@
 #include <WiFiUdp.h>
 #include <TM1637Display.h>
 
-// Set web server port number to 80
-WiFiServer server(80);
+#define ENABLE  1
+#define DISABLE 0
 
+#define TEST_DISPLAY          DISABLE
+#define LED_DISPLAY           ENABLE
+#define WIFI_MANAGER          ENABLE
+#define NTP_SERVER            ENABLE    
+#define CLIENT_CTRL           DISABLE
+
+// Set web server port number to 80
+WiFiServer wifi_server(80);
+#define WIFI_LED      2 // GPIO2
 // Variable to store the HTTP request
 String header;
 
@@ -26,14 +35,19 @@ String currentLine = "";                // make a String to hold incoming data f
   Because my timezone is utc+5:30 so
   UTC +5:30=5.5*60*60=19800
   UTC+1=1*60*60=3600
+
+  UTC+7 = 7*60*60=25200
   CALCULATE your timezone and edit it and then upload the code.
 */
-const long utcOffsetInSeconds = 19800;
+#if (NTP_SERVER == ENABLE)
+#define UTC_PLUS_7  25200
+const long utcOffsetInSeconds = UTC_PLUS_7;
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 /* Define NTP Client to get time */
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 
+#endif
 /* 7-SEG LED 4-DIGITS - TM1637 ================================================================ */
 // Define the connections pins
 const int CLK = D6; //Set the CLK pin connection to the display
@@ -74,6 +88,7 @@ const uint8_t celsius[] = {
 unsigned int ReadEnvBrightness()
 {
   // return ADC value
+  return 0;
 }
 
 void AdaptDisplayBrightness()
@@ -98,6 +113,7 @@ void AdaptDisplayBrightness()
   */
 }
 
+#if (NTP_SERVER == ENABLE)
 void InitTimeClient()
 {
   timeClient.begin();
@@ -110,13 +126,14 @@ void InitTimeClient()
   // timeClient.setTimeOffset(0);
 }
 
-void UpdateTimeClient()
+void UpdateNTPTime()
 {
   timeClient.update();  
 }
 
 void DisplayTimeClient()
 {
+  // Serial.println("DisplayTimeClient");
   Serial.print(daysOfTheWeek[timeClient.getDay()]);
   Serial.print(", ");
   Serial.print(timeClient.getHours());
@@ -126,10 +143,13 @@ void DisplayTimeClient()
   Serial.println(timeClient.getSeconds());
   //Serial.println(timeClient.getFormattedTime());
 
-  delay(1000);
+  // delay(1000);
 }
+#endif 
 
 void setup() {
+  bool res;
+
   Serial.println("Enter setup.\n");
   Serial.begin(115200);
   
@@ -140,31 +160,34 @@ void setup() {
 
   // WiFiManager
   // Local intialization. Once its business is done, there is no need to keep it around
-  WiFiManager wifiManager;
+  WiFiManager wm;
   
   // Uncomment and run it once, if you want to erase all the stored information
-  //wifiManager.resetSettings();
-  
-  // set custom ip for portal
-  //wifiManager.setAPConfig(IPAddress(10,0,1,1), IPAddress(10,0,1,1), IPAddress(255,255,255,0));
+  //wm.resetSettings();
 
-  // fetches ssid and pass from eeprom and tries to connect
-  // if it does not connect it starts an access point with the specified name
-  // here  "AutoConnectAP"
-  // and goes into a blocking loop awaiting configuration
-  wifiManager.autoConnect("AutoConnectAP");
-  // or use this for auto generated name ESP + ChipID
-  //wifiManager.autoConnect();
+  res = wm.autoConnect("eClock_AP");
+  if(!res) {
+      Serial.println("Connect failure");
+      // ESP.restart();
+  } 
+  else {
+      //if you get here you have connected to the WiFi    
+      Serial.println("Connect successfully");
+  }
   
   // if you get here you have connected to the WiFi
-  Serial.println("Connected.");
-  server.begin();
+  wifi_server.begin();
 
+#if (NTP_SERVER == ENABLE)
   InitTimeClient();
+#endif
 
+#if (LED_DISPLAY == ENABLE)
   // Display set up
   display.clear();
-  delay(500);
+  delay(100);
+  display.setBrightness(7);
+#endif
 }
 
 bool isClientConnected(WiFiClient client)
@@ -172,7 +195,7 @@ bool isClientConnected(WiFiClient client)
   return client.connected();
 }
 
-
+#if (CLIENT_CTRL == ENABLE)
 void checkForControlFromClient(WiFiClient client) // if there's bytes to read from the client,
 {
   if (client.available()) 
@@ -229,8 +252,8 @@ void checkForControlFromClient(WiFiClient client) // if there's bytes to read fr
         
         // The HTTP response ends with another blank line
         client.println();
-        // Break out of the while loop
-        break;
+        // Break out of this func
+        return;
       } else { // if you got a newline, then clear currentLine
         currentLine = "";
       }
@@ -239,28 +262,75 @@ void checkForControlFromClient(WiFiClient client) // if there's bytes to read fr
     }
   }
 }
+#endif
 
 void loop(){
 
-  WiFiClient client = server.available();   // Listen for incoming clients
+  // WiFiClient client = wifi_server.available();   // Listen for incoming clients
 
-  if (client) { 
-    Serial.println("\nNew Client.");          // print a message out in the serial port
+  // if (client) { 
+    // Serial.println("\nNew Client.");          // print a message out in the serial port
 
-    while (isClientConnected(client)) {            // loop while the client's connected
-      checkForControlFromClient(client);
-      UpdateTimeClient();
+    // if (isClientConnected(client)) {            // loop while the client's connected
+//     digitalWrite(output2, HIGH);
+//     Serial.println("Connected.");
+// #if (CLIENT_CTRL == ENABLE)
+//       checkForControlFromClient(client);
+// #endif
+//       UpdateNTPTime();
+//       DisplayTimeClient();
+//     } else {
+//       digitalWrite(output2, LOW);
+//     }
+//     // Clear the header variable
+//     header = "";
+//     // Close the connection
+//     client.stop();
+//     Serial.println("Client disconnected.");
+//     Serial.println("");
+//   }
+      uint hrs, time;
+      uint dot_on = 0b01000000;
+      uint dot_off = 0b00000000;
+      UpdateNTPTime();
       DisplayTimeClient();
-    }
-    // Clear the header variable
-    header = "";
-    // Close the connection
-    client.stop();
-    Serial.println("Client disconnected.");
-    Serial.println("");
-  }
+      // display.showNumberDec(timeClient.getHours(),false,2,0);
+      // display.showNumberDec(timeClient.getMinutes(),false,2,2);
+      hrs = timeClient.getHours() * 100;
+      time = hrs + timeClient.getMinutes();
+      display.showNumberDecEx(time, dot_on, false, 4, 0);
+      delay(1000);
+      display.showNumberDecEx(time, dot_off, false, 4, 0);
+      delay(1000);
 }
 
+#if (TEST_DISPLAY == ENABLE)
+void test_display() {
+  int numCounter = 0;
+  for(numCounter = 0; numCounter < 40; numCounter++) //Iterate numCounter
+  {
+    if ((numCounter >= 0)&& (numCounter < 5)){
+      display.setBrightness(0);
+    } else if ((numCounter >= 5)&& (numCounter < 10)) {
+      display.setBrightness(1);
+    } else if ((numCounter >= 10)&& (numCounter < 15)) {
+      display.setBrightness(2);
+    } else if ((numCounter >= 15)&& (numCounter < 20)) {
+      display.setBrightness(3);
+    } else if ((numCounter >= 20)&& (numCounter < 25)) {
+      display.setBrightness(4);
+    } else if ((numCounter >= 25)&& (numCounter < 30)) {
+      display.setBrightness(5);
+    } else if ((numCounter >= 30)&& (numCounter < 35)) {
+      display.setBrightness(6);
+    } else {
+      display.setBrightness(7);
+    }
+    display.showNumberDec(numCounter); //Display the numCounter value;
+    delay(1000);
+  }
+}
+#endif
 
 /* Ref link */
 // [1] https://randomnerdtutorials.com/esp8266-nodemcu-date-time-ntp-client-server-arduino/
@@ -268,5 +338,7 @@ void loop(){
 // [3] https://tttapa.github.io/ESP8266/Chap15%20-%20NTP.html
 // [4] https://www.instructables.com/How-to-Use-the-TM1637-Digit-Display-With-Arduino/
 // [5] https://randomnerdtutorials.com/esp8266-dht11dht22-temperature-and-humidity-web-server-with-arduino-ide/
+// [6] https://github.com/himikat123/Clock
+// [7] http://melissamerritt.epizy.com/internet-clock/internet_clock.html?i=1
 
 
