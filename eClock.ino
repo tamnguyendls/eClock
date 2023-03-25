@@ -266,4 +266,7 @@ void loop(){
 // [1] https://randomnerdtutorials.com/esp8266-nodemcu-date-time-ntp-client-server-arduino/
 // [2] https://www.instructables.com/Getting-Time-From-Internet-Using-ESP8266-NTP-Clock/
 // [3] https://tttapa.github.io/ESP8266/Chap15%20-%20NTP.html
+// [4] https://www.instructables.com/How-to-Use-the-TM1637-Digit-Display-With-Arduino/
+// [5] https://randomnerdtutorials.com/esp8266-dht11dht22-temperature-and-humidity-web-server-with-arduino-ide/
+
 
