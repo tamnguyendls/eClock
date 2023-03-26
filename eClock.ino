@@ -61,7 +61,7 @@ const uint8_t allON[] = {0xff, 0xff, 0xff, 0xff};
 
 // Create an array that turns all segments OFF
 const uint8_t allOFF[] = {0x00, 0x00, 0x00, 0x00};
-
+const uint8_t atStart[] = {0x40, 0x40, 0x40, 0x40};
 // Create an array that sets individual segments per digit to display the word "dOnE"
 const uint8_t done[] = {
   SEG_B | SEG_C | SEG_D | SEG_E | SEG_G,           // d
@@ -150,6 +150,14 @@ void DisplayTimeClient()
 void setup() {
   bool res;
 
+#if (LED_DISPLAY == ENABLE)
+  // Display set up
+  display.clear();
+  delay(100);
+  display.setBrightness(7);
+  display.setSegments(atStart);
+#endif
+
   Serial.println("Enter setup.\n");
   Serial.begin(115200);
   
@@ -169,10 +177,12 @@ void setup() {
   if(!res) {
       Serial.println("Connect failure");
       // ESP.restart();
+      display.setSegments(allON);
   } 
   else {
       //if you get here you have connected to the WiFi    
       Serial.println("Connect successfully");
+      display.setSegments(atStart);
   }
   
   // if you get here you have connected to the WiFi
@@ -182,12 +192,6 @@ void setup() {
   InitTimeClient();
 #endif
 
-#if (LED_DISPLAY == ENABLE)
-  // Display set up
-  display.clear();
-  delay(100);
-  display.setBrightness(7);
-#endif
 }
 
 bool isClientConnected(WiFiClient client)
