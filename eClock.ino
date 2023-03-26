@@ -298,9 +298,9 @@ void loop(){
       // display.showNumberDec(timeClient.getMinutes(),false,2,2);
       hrs = timeClient.getHours() * 100;
       time = hrs + timeClient.getMinutes();
-      display.showNumberDecEx(time, dot_on, false, 4, 0);
+      display.showNumberDecEx(time, dot_on, true, 4, 0);
       delay(1000);
-      display.showNumberDecEx(time, dot_off, false, 4, 0);
+      display.showNumberDecEx(time, dot_off, true, 4, 0);
       delay(1000);
 }
 
