@@ -13,6 +13,55 @@
 #define ENABLE  1
 #define DISABLE 0
 
+/* ========================================================================================
+   DEBUG LEVEL CONFIGURATION (Switch between DEBUG and PRODUCTION)
+   ========================================================================================
+   DEBUG_LEVEL: Controls verbosity of Serial.println() messages
+   Options:
+     0 = PRODUCTION (minimal logging - only errors)
+     1 = WARNING    (errors + warnings)
+     2 = INFO       (errors + warnings + info messages - RECOMMENDED FOR DEVELOPMENT)
+     3 = DEBUG      (all messages including detailed debug info)
+   ======================================================================================== */
+#define DEBUG_LEVEL 2
+
+/* Logging Macros - Automatically controlled by DEBUG_LEVEL */
+#if (DEBUG_LEVEL >= 3)
+  #define LOG_DEBUG(msg)   { Serial.print("[DEBUG] "); Serial.println(msg); }
+  #define LOG_DEBUGF(fmt, ...) { Serial.print("[DEBUG] "); Serial.printf(fmt, ##__VA_ARGS__); Serial.println(); }
+#else
+  #define LOG_DEBUG(msg)
+  #define LOG_DEBUGF(fmt, ...)
+#endif
+
+#if (DEBUG_LEVEL >= 2)
+  #define LOG_INFO(msg)    { Serial.print("[INFO] "); Serial.println(msg); }
+  #define LOG_INFOF(fmt, ...) { Serial.print("[INFO] "); Serial.printf(fmt, ##__VA_ARGS__); Serial.println(); }
+#else
+  #define LOG_INFO(msg)
+  #define LOG_INFOF(fmt, ...)
+#endif
+
+#if (DEBUG_LEVEL >= 1)
+  #define LOG_WARN(msg)    { Serial.print("[WARN] "); Serial.println(msg); }
+  #define LOG_WARNF(fmt, ...) { Serial.print("[WARN] "); Serial.printf(fmt, ##__VA_ARGS__); Serial.println(); }
+#else
+  #define LOG_WARN(msg)
+  #define LOG_WARNF(fmt, ...)
+#endif
+
+#if (DEBUG_LEVEL >= 0)
+  #define LOG_ERROR(msg)   { Serial.print("[ERROR] "); Serial.println(msg); }
+  #define LOG_ERRORF(fmt, ...) { Serial.print("[ERROR] "); Serial.printf(fmt, ##__VA_ARGS__); Serial.println(); }
+#else
+  #define LOG_ERROR(msg)
+  #define LOG_ERRORF(fmt, ...)
+#endif
+
+/* Legacy Support - Map old Serial.println to LOG_INFO for backward compatibility */
+#define SERIAL_PRINTLN(msg) LOG_INFO(msg)
+#define SERIAL_PRINT(msg)   { if(DEBUG_LEVEL >= 2) Serial.print(msg); }
+
 #define TEST_DISPLAY          DISABLE
 #define LED_DISPLAY           ENABLE
 #define WIFI_MANAGER          ENABLE
@@ -115,7 +164,7 @@ void SaveTimeToEEPROM()
   EEPROM.write(EEPROM_MILLIS_ADDR + 3, currentMillis & 0xFF);
   
   EEPROM.commit();  // Write to flash
-  Serial.println("[EEPROM] Time saved for WiFi loss fallback");
+  LOG_DEBUG("[EEPROM] Time saved for WiFi loss fallback");
 }
 
 /**
@@ -142,6 +191,7 @@ time_t GetEEPROMTime()
   unsigned long elapsed = (millis() - savedMillis) / 1000;  // Convert to seconds
   
   // Return estimated current time
+  LOG_DEBUGF("[EEPROM] Elapsed time since save: %lu seconds", elapsed);
   return savedEpoch + elapsed;
 }
 
@@ -262,10 +312,7 @@ void AdaptDisplayBrightness()
     lastBrightness = currentBrightness;
     
     // Optional: Log brightness changes to serial
-    Serial.print("Brightness adjusted: ADC=");
-    Serial.print(currentADC);
-    Serial.print(" Level=");
-    Serial.println(currentBrightness);
+    LOG_DEBUGF("Brightness adjusted: ADC=%u Level=%u", currentADC, currentBrightness);
   }
 }
 
@@ -278,7 +325,7 @@ void AdaptDisplayBrightness()
 void InitDHTSensor()
 {
   dht.begin();
-  Serial.println("[DHT] Humidity & Temperature Sensor initialized");
+  LOG_INFO("[DHT] Humidity & Temperature Sensor initialized");
 }
 
 /**
@@ -303,7 +350,7 @@ bool ReadDHTSensor()
   
   // Check if any reads failed
   if (isnan(humidity) || isnan(temperature)) {
-    Serial.println("[DHT] Failed to read from DHT sensor!");
+    LOG_ERROR("[DHT] Failed to read from DHT sensor!");
     return false;
   }
   
@@ -313,11 +360,7 @@ bool ReadDHTSensor()
   lastDHTReadTime = currentTime;
   
   // Log readings
-  Serial.print("[DHT] Temperature: ");
-  Serial.print(temperature);
-  Serial.print("°C, Humidity: ");
-  Serial.print(humidity);
-  Serial.println("%");
+  LOG_INFOF("[DHT] Temperature: %.1f°C, Humidity: %.1f%%", temperature, humidity);
   
   return true;
 }
@@ -331,7 +374,7 @@ void DisplayTemperature()
 {
   if (!ReadDHTSensor()) {
     // If sensor read failed, show "-----"
-    Serial.println("[DHT] Cannot display temperature - sensor read failed");
+    LOG_ERROR("[DHT] Cannot display temperature - sensor read failed");
     display.setSegments(atStart);
     return;
   }
@@ -348,9 +391,7 @@ void DisplayTemperature()
   
   // Optional: Show degree symbol in 3rd position
   // This is a bit tricky with TM1637 - we can use custom segments
-  Serial.print("[DHT] Displaying: ");
-  Serial.print(tempInt);
-  Serial.println("°C");
+  LOG_INFOF("[DHT] Displaying: %d°C", tempInt);
 }
 
 /**
@@ -431,7 +472,7 @@ void HandleDataDisplaySequence()
       (currentTime - displayStateChangeTime >= TEMP_DISPLAY_INTERVAL)) {
     currentDisplayState = DISPLAY_STATE_TEMP;
     displayStateChangeTime = currentTime;
-    Serial.println("[DHT] State: Showing Temperature");
+    LOG_DEBUG("[DHT] State: Showing Temperature");
     DisplayTemperature();
     return;
   }
@@ -441,7 +482,7 @@ void HandleDataDisplaySequence()
       (currentTime - displayStateChangeTime >= TEMP_DISPLAY_DURATION)) {
     currentDisplayState = DISPLAY_STATE_HUMIDITY;
     displayStateChangeTime = currentTime;
-    Serial.println("[DHT] State: Showing Humidity");
+    LOG_DEBUG("[DHT] State: Showing Humidity");
     DisplayHumidity();
     return;
   }
@@ -451,7 +492,7 @@ void HandleDataDisplaySequence()
       (currentTime - displayStateChangeTime >= TEMP_DISPLAY_DURATION)) {
     currentDisplayState = DISPLAY_STATE_TIME;
     displayStateChangeTime = currentTime;
-    Serial.println("[DHT] State: Back to Time");
+    LOG_DEBUG("[DHT] State: Back to Time");
     return;
   }
 }
@@ -477,11 +518,11 @@ void HandleStartupBlinking()
     if (displayBlinkState) {
       // Show dashes
       display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});
-      Serial.println("[STARTUP] Blinking display: ON (dashes visible)");
+      LOG_DEBUG("[STARTUP] Blinking display: ON (dashes visible)");
     } else {
       // Show blank
       display.setSegments((uint8_t[]){0x00, 0x00, 0x00, 0x00});
-      Serial.println("[STARTUP] Blinking display: OFF (blank)");
+      LOG_DEBUG("[STARTUP] Blinking display: OFF (blank)");
     }
   }
 }
@@ -509,14 +550,12 @@ void UpdateNTPTime()
 void DisplayTimeClient()
 {
   // Serial.println("DisplayTimeClient");
-  Serial.print(daysOfTheWeek[timeClient.getDay()]);
-  Serial.print(", ");
-  Serial.print(timeClient.getHours());
-  Serial.print(":");
-  Serial.print(timeClient.getMinutes());
-  Serial.print(":");
-  Serial.println(timeClient.getSeconds());
-  //Serial.println(timeClient.getFormattedTime());
+  LOG_DEBUGF("%s, %02u:%02u:%02u", 
+             daysOfTheWeek[timeClient.getDay()],
+             timeClient.getHours(),
+             timeClient.getMinutes(),
+             timeClient.getSeconds());
+  //LOG_DEBUG(timeClient.getFormattedTime());
 
   // delay(1000);
 }
@@ -536,8 +575,7 @@ bool UpdateNTPWithInterval()
     lastNTPUpdate = now;
     timeIsValid = true;  // Mark time as valid once NTP succeeds
     
-    Serial.print("[NTP] Time synced at ");
-    Serial.println(timeClient.getFormattedTime());
+    LOG_INFOF("[NTP] Time synced at %s", timeClient.getFormattedTime().c_str());
     
     // Save time to EEPROM for WiFi loss fallback
 #if (EEPROM_FALLBACK == ENABLE)
@@ -570,15 +608,15 @@ bool UpdateNTPWithInterval()
 void InitRTC()
 {
   if (!rtc.begin()) {
-    Serial.println("[RTC] DS3231 RTC not found on I2C bus");
+    LOG_WARN("[RTC] DS3231 RTC not found on I2C bus");
     rtcAvailable = false;
   } else {
-    Serial.println("[RTC] DS3231 RTC initialized successfully");
+    LOG_INFO("[RTC] DS3231 RTC initialized successfully");
     rtcAvailable = true;
     
     // Set RTC time from NTP if RTC time is not set
     if (!rtc.isrunning()) {
-      Serial.println("[RTC] RTC not running, setting time from NTP...");
+      LOG_WARN("[RTC] RTC not running, setting time from NTP...");
       // Will be synced after NTP updates in first loop
     }
   }
@@ -607,7 +645,7 @@ void SyncRTCFromNTP()
   // Only sync on 1st of month or if RTC is not running
   if (rtc.isrunning() == false || timeClient.getDate() == 1) {
     rtc.adjust(DateTime(ntpTime));
-    Serial.println("[RTC] Time synchronized from NTP");
+    LOG_INFO("[RTC] Time synchronized from NTP");
     lastRTCSync = millis();
   }
 }
@@ -632,17 +670,9 @@ bool ApplyTimeSource()
     if (rtcAvailable) {
       DateTime rtcTime = GetRTCTime();
       if (rtcTime.isValid()) {
-        Serial.print("[RTC] Using RTC fallback: ");
-        Serial.print(rtcTime.year());
-        Serial.print("-");
-        Serial.print(rtcTime.month());
-        Serial.print("-");
-        Serial.print(rtcTime.day());
-        Serial.print(" ");
-        Serial.print(rtcTime.hour());
-        Serial.print(":");
-        Serial.print(rtcTime.minute());
-        Serial.println();
+        LOG_INFOF("[RTC] Using RTC fallback: %04u-%02u-%02u %02u:%02u", 
+                  rtcTime.year(), rtcTime.month(), rtcTime.day(), 
+                  rtcTime.hour(), rtcTime.minute());
         return true;
       }
     }
@@ -652,8 +682,7 @@ bool ApplyTimeSource()
 #if (EEPROM_FALLBACK == ENABLE)
     time_t eepromTime = GetEEPROMTime();
     if (eepromTime > 0) {
-      Serial.print("[EEPROM] Using fallback time (elapsed since sync): ");
-      Serial.println(eepromTime);
+      LOG_INFOF("[EEPROM] Using fallback time (elapsed since sync): %lu", eepromTime);
       return true;
     }
 #endif
@@ -677,20 +706,20 @@ void setup() {
   // REQ_6: Show "--:--" while waiting for time
 #if (TIME_VALIDITY_CHECK == ENABLE)
   display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});  // Display dashes
-  Serial.println("[DISPLAY] Showing '--:--' (waiting for time)");
+  LOG_INFO("[DISPLAY] Showing '--:--' (waiting for time)");
 #else
   display.setSegments(atStart);
 #endif
 
 #endif
 
-  Serial.println("Enter setup.\n");
+  LOG_INFO("Enter setup.");
   Serial.begin(115200);
   
   // Initialize EEPROM for time fallback storage
 #if (EEPROM_FALLBACK == ENABLE)
   EEPROM.begin(EEPROM_SIZE);
-  Serial.println("[EEPROM] Initialized for time fallback storage");
+  LOG_INFO("[EEPROM] Initialized for time fallback storage");
 #endif
   
   // Initialize the output variables as outputs
@@ -707,14 +736,14 @@ void setup() {
 
   res = wm.autoConnect("eClock_AP");
   if(!res) {
-      Serial.println("Connect failure");
+      LOG_WARN("[WiFi] Connect failure");
       // ESP.restart();
       display.setSegments(allON);
       isConnectingWiFi = true;  // Keep blinking on connection failure
   } 
   else {
       //if you get here you have connected to the WiFi    
-      Serial.println("Connect successfully");
+      LOG_INFO("[WiFi] Connect successfully");
       isConnectingWiFi = false;  // Stop blinking - WiFi is now connected
       
 #if (TIME_VALIDITY_CHECK == ENABLE)
@@ -790,7 +819,7 @@ void ServeDataEndpoint(WiFiClient client)
   
   client.print(json);
   
-  Serial.println("[API] Served data endpoint");
+  LOG_DEBUG("[API] Served data endpoint");
 }
 
 /**
@@ -974,7 +1003,7 @@ void ServeDashboardPage(WiFiClient client)
   
   client.print(html);
   
-  Serial.println("[WEB] Served dashboard page");
+  LOG_DEBUG("[WEB] Served dashboard page");
 }
 
 #if (CLIENT_CTRL == ENABLE)
@@ -1007,11 +1036,11 @@ void checkForControlFromClient(WiFiClient client) // if there's bytes to read fr
         
         // Route 3: GPIO control (legacy)
         if (header.indexOf("GET /2/on") >= 0) {
-          Serial.println("GPIO 2 on");
+          LOG_INFO("GPIO 2 on");
           output2State = "on";
           digitalWrite(output2, HIGH);
         } else if (header.indexOf("GET /2/off") >= 0) {
-          Serial.println("GPIO 2 off");
+          LOG_INFO("GPIO 2 off");
           output2State = "off";
           digitalWrite(output2, LOW);
         }
@@ -1120,7 +1149,7 @@ void loop(){
 #if (RTC_BACKUP == ENABLE)
       if (!ApplyTimeSource()) {
         // No valid time source
-        Serial.println("[TIME] No valid time source available");
+        LOG_ERROR("[TIME] No valid time source available");
         display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});
         delay(1000);
         return;
