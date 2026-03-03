@@ -349,6 +349,35 @@ void DisplayTemperature()
 }
 
 /**
+ * DisplayHumidity: Show humidity on 7-segment display
+ * Format: "HH%" where HH = humidity percentage (2 digits)
+ * Example: 65% displays as "65"
+ */
+void DisplayHumidity()
+{
+  if (!ReadDHTSensor()) {
+    // If sensor read failed, show dashes
+    Serial.println("[DHT] Cannot display humidity - sensor read failed");
+    display.setSegments(atStart);
+    return;
+  }
+  
+  // Display humidity as 2-digit number (e.g., 65 for 65%)
+  int humidInt = (int)lastHumidity;
+  
+  // Ensure humidity is within displayable range (0-99)
+  if (humidInt < 0) humidInt = 0;
+  if (humidInt > 99) humidInt = 99;
+  
+  // Display humidity: Show as "HH"
+  display.showNumberDec(humidInt, false, 2, 0);  // Show in first 2 digits
+  
+  Serial.print("[DHT] Displaying: ");
+  Serial.print(humidInt);
+  Serial.println("%");
+}
+
+/**
  * HandleTemperatureDisplay: Manage temperature display rotation
  * - Shows time normally
  * - Switches to temperature every 60 seconds (TEMP_DISPLAY_INTERVAL)
@@ -372,6 +401,52 @@ void HandleTemperatureDisplay()
   if (showingTemperature && (currentTime - lastTempDisplayTime >= TEMP_DISPLAY_DURATION)) {
     showingTemperature = false;
     Serial.println("[DHT] Switching back to time display");
+    return;
+  }
+}
+
+/**
+ * DisplayDataSequence: Cycle through time, temperature, and humidity displays
+ * Sequence: Time (normal) -> Temp (10s) -> Humidity (10s) -> repeat
+ * Call this in main loop to manage full rotation
+ */
+#define DISPLAY_STATE_TIME       0
+#define DISPLAY_STATE_TEMP       1
+#define DISPLAY_STATE_HUMIDITY   2
+
+uint8_t currentDisplayState = DISPLAY_STATE_TIME;
+unsigned long displayStateChangeTime = 0;
+
+void HandleDataDisplaySequence()
+{
+  unsigned long currentTime = millis();
+  
+  // After TEMP_DISPLAY_INTERVAL (60s), switch to temperature
+  if (currentDisplayState == DISPLAY_STATE_TIME && 
+      (currentTime - displayStateChangeTime >= TEMP_DISPLAY_INTERVAL)) {
+    currentDisplayState = DISPLAY_STATE_TEMP;
+    displayStateChangeTime = currentTime;
+    Serial.println("[DHT] State: Showing Temperature");
+    DisplayTemperature();
+    return;
+  }
+  
+  // After displaying temp for 10s, switch to humidity
+  if (currentDisplayState == DISPLAY_STATE_TEMP && 
+      (currentTime - displayStateChangeTime >= TEMP_DISPLAY_DURATION)) {
+    currentDisplayState = DISPLAY_STATE_HUMIDITY;
+    displayStateChangeTime = currentTime;
+    Serial.println("[DHT] State: Showing Humidity");
+    DisplayHumidity();
+    return;
+  }
+  
+  // After displaying humidity for 10s, back to time
+  if (currentDisplayState == DISPLAY_STATE_HUMIDITY && 
+      (currentTime - displayStateChangeTime >= TEMP_DISPLAY_DURATION)) {
+    currentDisplayState = DISPLAY_STATE_TIME;
+    displayStateChangeTime = currentTime;
+    Serial.println("[DHT] State: Back to Time");
     return;
   }
 }
@@ -638,6 +713,233 @@ bool isClientConnected(WiFiClient client)
   return client.connected();
 }
 
+/**
+ * ServeDataEndpoint: Serve JSON API with current time, temperature, humidity
+ * Returns JSON: {"time": "HH:MM:SS", "temperature": 24.5, "humidity": 65.0, "timestamp": 1234567890}
+ */
+void ServeDataEndpoint(WiFiClient client)
+{
+  // Send HTTP headers
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-type: application/json");
+  client.println("Connection: close");
+  client.println();
+  
+  // Build JSON response
+  String json = "{";
+  json += "\"time\":\"";
+  
+  // Format time HH:MM:SS
+  if (timeClient.getHours() < 10) json += "0";
+  json += timeClient.getHours();
+  json += ":";
+  if (timeClient.getMinutes() < 10) json += "0";
+  json += timeClient.getMinutes();
+  json += ":";
+  if (timeClient.getSeconds() < 10) json += "0";
+  json += timeClient.getSeconds();
+  json += "\",";
+  
+#if (DHT_SENSOR == ENABLE)
+  json += "\"temperature\":" + String(lastTemperature, 1) + ",";
+  json += "\"humidity\":" + String(lastHumidity, 1) + ",";
+#else
+  json += "\"temperature\":null,";
+  json += "\"humidity\":null,";
+#endif
+  
+  json += "\"timestamp\":" + String(timeClient.getEpochTime());
+  json += "}";
+  
+  client.print(json);
+  
+  Serial.println("[API] Served data endpoint");
+}
+
+/**
+ * ServeDashboardPage: Serve HTML dashboard displaying live time, temperature, humidity
+ */
+void ServeDashboardPage(WiFiClient client)
+{
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-type: text/html");
+  client.println("Connection: close");
+  client.println();
+  
+  String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>eClock Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 15px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 40px;
+      max-width: 500px;
+      width: 100%;
+    }
+    h1 {
+      color: #333;
+      text-align: center;
+      margin-bottom: 10px;
+      font-size: 32px;
+    }
+    .subtitle {
+      color: #999;
+      text-align: center;
+      margin-bottom: 40px;
+      font-size: 14px;
+    }
+    .data-box {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .data-label {
+      font-size: 12px;
+      opacity: 0.9;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .data-value {
+      font-size: 36px;
+      font-weight: bold;
+      font-family: 'Courier New', monospace;
+    }
+    .data-unit {
+      font-size: 14px;
+      opacity: 0.8;
+      margin-left: 8px;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    .info-item {
+      background: #f5f7ff;
+      border-left: 4px solid #667eea;
+      padding: 15px;
+      border-radius: 5px;
+    }
+    .info-label {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 5px;
+      text-transform: uppercase;
+    }
+    .info-value {
+      font-size: 24px;
+      color: #333;
+      font-weight: bold;
+    }
+    .refresh-status {
+      text-align: center;
+      font-size: 12px;
+      color: #999;
+      margin-top: 20px;
+    }
+    .status-online {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #4caf50;
+      border-radius: 50%;
+      margin-right: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>eClock</h1>
+    <p class="subtitle">Live Data Dashboard</p>
+    
+    <div class="data-box">
+      <div class="data-label">⏰ Current Time</div>
+      <div class="data-value" id="timeDisplay">--:--:--</div>
+    </div>
+    
+    <div class="info-grid">
+      <div class="info-item">
+        <div class="info-label">🌡️ Temperature</div>
+        <div class="info-value" id="tempDisplay">--</div>
+        <span style="font-size: 12px;">°C</span>
+      </div>
+      <div class="info-item">
+        <div class="info-label">💧 Humidity</div>
+        <div class="info-value" id="humidDisplay">--</div>
+        <span style="font-size: 12px;">%</span>
+      </div>
+    </div>
+    
+    <div class="refresh-status">
+      <span class="status-online"></span>
+      <span id="statusText">Connecting...</span>
+    </div>
+  </div>
+  
+  <script>
+    const API_ENDPOINT = '/api/data';
+    const REFRESH_INTERVAL = 2000; // Update every 2 seconds
+    
+    function fetchData() {
+      fetch(API_ENDPOINT)
+        .then(response => response.json())
+        .then(data => {
+          document.getElementById('timeDisplay').textContent = data.time;
+          
+          if (data.temperature !== null) {
+            document.getElementById('tempDisplay').textContent = data.temperature.toFixed(1);
+          } else {
+            document.getElementById('tempDisplay').textContent = '--';
+          }
+          
+          if (data.humidity !== null) {
+            document.getElementById('humidDisplay').textContent = data.humidity.toFixed(1);
+          } else {
+            document.getElementById('humidDisplay').textContent = '--';
+          }
+          
+          document.getElementById('statusText').textContent = 'Connected • Last update: ' + new Date().toLocaleTimeString();
+        })
+        .catch(error => {
+          console.error('Error fetching data:', error);
+          document.getElementById('statusText').textContent = 'Connection error';
+        });
+    }
+    
+    // Initial fetch and set up auto-refresh
+    fetchData();
+    setInterval(fetchData, REFRESH_INTERVAL);
+  </script>
+</body>
+</html>
+)rawliteral";
+  
+  client.print(html);
+  
+  Serial.println("[WEB] Served dashboard page");
+}
+
 #if (CLIENT_CTRL == ENABLE)
 void checkForControlFromClient(WiFiClient client) // if there's bytes to read from the client,
 {
@@ -650,14 +952,23 @@ void checkForControlFromClient(WiFiClient client) // if there's bytes to read fr
       // if the current line is blank, you got two newline characters in a row.
       // that's the end of the client HTTP request, so send a response:
       if (currentLine.length() == 0) {
-        // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
-        // and a content-type so the client knows what's coming, then a blank line:
-        client.println("HTTP/1.1 200 OK");
-        client.println("Content-type:text/html");
-        client.println("Connection: close");
-        client.println();
+        // Check for different routes and serve appropriate content
         
-        // turns the GPIOs on and off
+        // Route 1: API endpoint /api/data (JSON with time, temp, humidity)
+        if (header.indexOf("GET /api/data") >= 0) {
+          ServeDataEndpoint(client);
+          client.println();
+          return;
+        }
+        
+        // Route 2: Dashboard /dashboard (HTML with live data display)
+        if (header.indexOf("GET /dashboard") >= 0) {
+          ServeDashboardPage(client);
+          client.println();
+          return;
+        }
+        
+        // Route 3: GPIO control (legacy)
         if (header.indexOf("GET /2/on") >= 0) {
           Serial.println("GPIO 2 on");
           output2State = "on";
@@ -668,7 +979,17 @@ void checkForControlFromClient(WiFiClient client) // if there's bytes to read fr
           digitalWrite(output2, LOW);
         }
         
-        // Display the HTML web page from wifi_setup.h header file
+        // Route 4: Default page - WiFi Setup or Dashboard
+        // If root path, show dashboard if DHT available, else WiFi setup
+#if (DHT_SENSOR == ENABLE)
+        if (header.indexOf("GET /") >= 0) {
+          ServeDashboardPage(client);
+          client.println();
+          return;
+        }
+#endif
+        
+        // Default: Display the HTML web page from wifi_setup.h header file
         client.println("HTTP/1.1 200 OK");
         client.println("Content-type:text/html");
         client.println("Connection: close");
@@ -775,12 +1096,12 @@ void loop(){
 #endif
 
 #if (DHT_SENSOR == ENABLE)
-      // ERQ_7, REQ_12: Handle temperature display rotation
-      // Reads temperature every 5 minutes, displays for 10 seconds every 60 seconds
-      HandleTemperatureDisplay();
+      // ERQ_7, REQ_12: Handle data display rotation (Time -> Temp -> Humidity)
+      // Reads temperature/humidity every 5 minutes, cycles displays every 60 seconds
+      HandleDataDisplaySequence();
       
-      // If not showing temperature, display time normally
-      if (!showingTemperature) {
+      // If not showing temperature or humidity, display time normally
+      if (currentDisplayState == DISPLAY_STATE_TIME) {
 #endif
       
       // Display time with colon blinking
@@ -796,7 +1117,7 @@ void loop(){
       delay(1000);
 
 #if (DHT_SENSOR == ENABLE)
-      }  // End of !showingTemperature check
+      }  // End of currentDisplayState == DISPLAY_STATE_TIME check
 #endif
 }
 
