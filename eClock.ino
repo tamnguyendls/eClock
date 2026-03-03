@@ -6,6 +6,7 @@
 #include <WiFiUdp.h>
 #include <TM1637Display.h>
 #include <RTClib.h>              // https://github.com/adafruit/RTClib
+#include <EEPROM.h>              // Built-in: Store time when NTP syncs
 
 #define ENABLE  1
 #define DISABLE 0
@@ -16,7 +17,8 @@
 #define NTP_SERVER            ENABLE    
 #define CLIENT_CTRL           DISABLE
 #define AUTO_BRIGHTNESS       ENABLE    // Enable automatic brightness adjustment
-#define RTC_BACKUP            ENABLE    // Enable DS3231 RTC backup when WiFi lost (REQ_5)
+#define RTC_BACKUP            DISABLE   // RTC backup (DS3231 chip, optional hardware)
+#define EEPROM_FALLBACK       ENABLE    // EEPROM fallback (software-only, no hardware needed)
 #define TIME_VALIDITY_CHECK   ENABLE    // Display '--:--' until time is valid (REQ_6)
 
 // Set web server port number to 80
@@ -56,6 +58,67 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 unsigned long lastNTPUpdate = 0;        // Timestamp of last NTP update
 bool timeIsValid = false;               // Flag: time has been synced at least once
 unsigned long lastRTCSync = 0;          // Timestamp of last RTC sync to NTP
+
+#endif
+
+/* EEPROM Storage for Time Fallback (Software-only, no hardware needed) ================= */
+#if (EEPROM_FALLBACK == ENABLE)
+#define EEPROM_SIZE 512                 // Total EEPROM size
+#define EEPROM_TIME_ADDR 0              // Address for storing epoch time (4 bytes)
+#define EEPROM_MILLIS_ADDR 4            // Address for storing millis at save time (4 bytes)
+
+/**
+ * SaveTimeToEEPROM: Save current NTP time to EEPROM
+ * Stores: Current epoch time + millis() reference
+ * Called: After each NTP sync
+ */
+void SaveTimeToEEPROM()
+{
+  time_t epochTime = timeClient.getEpochTime();
+  unsigned long currentMillis = millis();
+  
+  // Write epoch time (4 bytes)
+  EEPROM.write(EEPROM_TIME_ADDR, (epochTime >> 24) & 0xFF);
+  EEPROM.write(EEPROM_TIME_ADDR + 1, (epochTime >> 16) & 0xFF);
+  EEPROM.write(EEPROM_TIME_ADDR + 2, (epochTime >> 8) & 0xFF);
+  EEPROM.write(EEPROM_TIME_ADDR + 3, epochTime & 0xFF);
+  
+  // Write millis reference (4 bytes)
+  EEPROM.write(EEPROM_MILLIS_ADDR, (currentMillis >> 24) & 0xFF);
+  EEPROM.write(EEPROM_MILLIS_ADDR + 1, (currentMillis >> 16) & 0xFF);
+  EEPROM.write(EEPROM_MILLIS_ADDR + 2, (currentMillis >> 8) & 0xFF);
+  EEPROM.write(EEPROM_MILLIS_ADDR + 3, currentMillis & 0xFF);
+  
+  EEPROM.commit();  // Write to flash
+  Serial.println("[EEPROM] Time saved for WiFi loss fallback");
+}
+
+/**
+ * GetEEPROMTime: Retrieve saved time and calculate elapsed time
+ * Returns: Estimated current time based on saved time + elapsed millis
+ */
+time_t GetEEPROMTime()
+{
+  // Read epoch time (4 bytes)
+  uint32_t savedEpoch = 0;
+  savedEpoch |= ((uint32_t)EEPROM.read(EEPROM_TIME_ADDR)) << 24;
+  savedEpoch |= ((uint32_t)EEPROM.read(EEPROM_TIME_ADDR + 1)) << 16;
+  savedEpoch |= ((uint32_t)EEPROM.read(EEPROM_TIME_ADDR + 2)) << 8;
+  savedEpoch |= ((uint32_t)EEPROM.read(EEPROM_TIME_ADDR + 3));
+  
+  // Read saved millis reference (4 bytes)
+  uint32_t savedMillis = 0;
+  savedMillis |= ((uint32_t)EEPROM.read(EEPROM_MILLIS_ADDR)) << 24;
+  savedMillis |= ((uint32_t)EEPROM.read(EEPROM_MILLIS_ADDR + 1)) << 16;
+  savedMillis |= ((uint32_t)EEPROM.read(EEPROM_MILLIS_ADDR + 2)) << 8;
+  savedMillis |= ((uint32_t)EEPROM.read(EEPROM_MILLIS_ADDR + 3));
+  
+  // Calculate elapsed time since save
+  unsigned long elapsed = (millis() - savedMillis) / 1000;  // Convert to seconds
+  
+  // Return estimated current time
+  return savedEpoch + elapsed;
+}
 
 #endif
 
@@ -232,6 +295,11 @@ bool UpdateNTPWithInterval()
     Serial.print("[NTP] Time synced at ");
     Serial.println(timeClient.getFormattedTime());
     
+    // Save time to EEPROM for WiFi loss fallback
+#if (EEPROM_FALLBACK == ENABLE)
+    SaveTimeToEEPROM();
+#endif
+    
     // Sync RTC if available (REQ_11: Every 1st of month)
 #if (RTC_BACKUP == ENABLE)
     if (rtcAvailable) {
@@ -301,22 +369,25 @@ void SyncRTCFromNTP()
 }
 
 /**
- * ApplyTimeSource: Get time from NTP or RTC based on WiFi status
+ * ApplyTimeSource: Get time from NTP or fallback sources based on WiFi status
  * Returns: true if time is available, false if no valid time source
- * REQ_5: Use RTC when WiFi lost, NTP when available
+ * Priority: NTP (if WiFi) > RTC (if available) > EEPROM (if available)
+ * REQ_5: RTC fallback when WiFi lost
+ * EEPROM: Software-only fallback (no hardware needed)
  */
 bool ApplyTimeSource()
 {
   if (WiFi.status() == WL_CONNECTED) {
-    // WiFi available: use NTP time
+    // WiFi available: use NTP time (preferred)
     return timeIsValid;
   } else {
-    // WiFi lost: try RTC fallback
+    // WiFi lost: try hardware and software fallbacks
+    
+    // First priority: RTC module (most accurate)
+#if (RTC_BACKUP == ENABLE)
     if (rtcAvailable) {
       DateTime rtcTime = GetRTCTime();
       if (rtcTime.isValid()) {
-        // Update NTP client epoch time with RTC time for display
-        // This allows seamless fallback without changing display code
         Serial.print("[RTC] Using RTC fallback: ");
         Serial.print(rtcTime.year());
         Serial.print("-");
@@ -328,10 +399,22 @@ bool ApplyTimeSource()
         Serial.print(":");
         Serial.print(rtcTime.minute());
         Serial.println();
-        
         return true;
       }
     }
+#endif
+    
+    // Second priority: EEPROM storage (software-only)
+#if (EEPROM_FALLBACK == ENABLE)
+    time_t eepromTime = GetEEPROMTime();
+    if (eepromTime > 0) {
+      Serial.print("[EEPROM] Using fallback time (elapsed since sync): ");
+      Serial.println(eepromTime);
+      return true;
+    }
+#endif
+    
+    // No valid time source available
     return false;
   }
 }
@@ -359,6 +442,12 @@ void setup() {
 
   Serial.println("Enter setup.\n");
   Serial.begin(115200);
+  
+  // Initialize EEPROM for time fallback storage
+#if (EEPROM_FALLBACK == ENABLE)
+  EEPROM.begin(EEPROM_SIZE);
+  Serial.println("[EEPROM] Initialized for time fallback storage");
+#endif
   
   // Initialize the output variables as outputs
   pinMode(output2, OUTPUT);
