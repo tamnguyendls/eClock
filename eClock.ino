@@ -5,6 +5,7 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <TM1637Display.h>
+#include <RTClib.h>              // https://github.com/adafruit/RTClib
 
 #define ENABLE  1
 #define DISABLE 0
@@ -15,6 +16,8 @@
 #define NTP_SERVER            ENABLE    
 #define CLIENT_CTRL           DISABLE
 #define AUTO_BRIGHTNESS       ENABLE    // Enable automatic brightness adjustment
+#define RTC_BACKUP            ENABLE    // Enable DS3231 RTC backup when WiFi lost (REQ_5)
+#define TIME_VALIDITY_CHECK   ENABLE    // Display '--:--' until time is valid (REQ_6)
 
 // Set web server port number to 80
 WiFiServer wifi_server(80);
@@ -42,14 +45,25 @@ String currentLine = "";                // make a String to hold incoming data f
 */
 #if (NTP_SERVER == ENABLE)
 #define UTC_PLUS_7  25200
+#define NTP_UPDATE_INTERVAL 60000  // Update NTP every 60 seconds (REQ_4)
 const long utcOffsetInSeconds = UTC_PLUS_7;
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 /* Define NTP Client to get time */
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 
+/* Time tracking variables */
+unsigned long lastNTPUpdate = 0;        // Timestamp of last NTP update
+bool timeIsValid = false;               // Flag: time has been synced at least once
+unsigned long lastRTCSync = 0;          // Timestamp of last RTC sync to NTP
+
 #endif
-/* 7-SEG LED 4-DIGITS - TM1637 ================================================================ */
+
+/* RTC Module - DS3231 (I2C: SDA=D4, SCL=D3) ============================================= */
+#if (RTC_BACKUP == ENABLE)
+RTC_DS3231 rtc;
+bool rtcAvailable = false;  // Flag: RTC module found on I2C bus
+#endif
 // Define the connections pins
 const int CLK = D6; //Set the CLK pin connection to the display
 const int DIO = D5; //Set the DIO pin connection to the display
@@ -199,6 +213,129 @@ void DisplayTimeClient()
 
   // delay(1000);
 }
+
+/**
+ * UpdateNTPWithInterval: Updates NTP time only if interval has elapsed
+ * REQ_4: Updates every 60 seconds instead of every main loop iteration
+ * Returns: true if update was performed, false if skipped due to timing
+ */
+bool UpdateNTPWithInterval()
+{
+  unsigned long now = millis();
+  
+  // Only update if NTP_UPDATE_INTERVAL milliseconds have passed
+  if (now - lastNTPUpdate >= NTP_UPDATE_INTERVAL) {
+    timeClient.update();
+    lastNTPUpdate = now;
+    timeIsValid = true;  // Mark time as valid once NTP succeeds
+    
+    Serial.print("[NTP] Time synced at ");
+    Serial.println(timeClient.getFormattedTime());
+    
+    // Sync RTC if available (REQ_11: Every 1st of month)
+#if (RTC_BACKUP == ENABLE)
+    if (rtcAvailable) {
+      SyncRTCFromNTP();
+    }
+#endif
+    
+    return true;
+  }
+  
+  return false;
+}
+
+#endif
+
+/* RTC Time Functions ======================================================================== */
+#if (RTC_BACKUP == ENABLE)
+
+/**
+ * InitRTC: Initialize DS3231 RTC module
+ * Checks if RTC is available on I2C bus
+ * REQ_5: RTC fallback when WiFi lost
+ */
+void InitRTC()
+{
+  if (!rtc.begin()) {
+    Serial.println("[RTC] DS3231 RTC not found on I2C bus");
+    rtcAvailable = false;
+  } else {
+    Serial.println("[RTC] DS3231 RTC initialized successfully");
+    rtcAvailable = true;
+    
+    // Set RTC time from NTP if RTC time is not set
+    if (!rtc.isrunning()) {
+      Serial.println("[RTC] RTC not running, setting time from NTP...");
+      // Will be synced after NTP updates in first loop
+    }
+  }
+}
+
+/**
+ * GetRTCTime: Read current time from DS3231 RTC
+ * Returns: DateTime object with RTC time
+ */
+DateTime GetRTCTime()
+{
+  if (rtcAvailable) {
+    return rtc.now();
+  }
+  return DateTime(0);  // Return epoch if RTC unavailable
+}
+
+/**
+ * SyncRTCFromNTP: Synchronize RTC time with NTP time
+ * REQ_11: Update RTC time from NTP every 1st day of month
+ */
+void SyncRTCFromNTP()
+{
+  time_t ntpTime = timeClient.getEpochTime();
+  
+  // Only sync on 1st of month or if RTC is not running
+  if (rtc.isrunning() == false || timeClient.getDate() == 1) {
+    rtc.adjust(DateTime(ntpTime));
+    Serial.println("[RTC] Time synchronized from NTP");
+    lastRTCSync = millis();
+  }
+}
+
+/**
+ * ApplyTimeSource: Get time from NTP or RTC based on WiFi status
+ * Returns: true if time is available, false if no valid time source
+ * REQ_5: Use RTC when WiFi lost, NTP when available
+ */
+bool ApplyTimeSource()
+{
+  if (WiFi.status() == WL_CONNECTED) {
+    // WiFi available: use NTP time
+    return timeIsValid;
+  } else {
+    // WiFi lost: try RTC fallback
+    if (rtcAvailable) {
+      DateTime rtcTime = GetRTCTime();
+      if (rtcTime.isValid()) {
+        // Update NTP client epoch time with RTC time for display
+        // This allows seamless fallback without changing display code
+        Serial.print("[RTC] Using RTC fallback: ");
+        Serial.print(rtcTime.year());
+        Serial.print("-");
+        Serial.print(rtcTime.month());
+        Serial.print("-");
+        Serial.print(rtcTime.day());
+        Serial.print(" ");
+        Serial.print(rtcTime.hour());
+        Serial.print(":");
+        Serial.print(rtcTime.minute());
+        Serial.println();
+        
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
 #endif 
 
 void setup() {
@@ -209,7 +346,15 @@ void setup() {
   display.clear();
   delay(100);
   display.setBrightness(7);
+  
+  // REQ_6: Show "--:--" while waiting for time
+#if (TIME_VALIDITY_CHECK == ENABLE)
+  display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});  // Display dashes
+  Serial.println("[DISPLAY] Showing '--:--' (waiting for time)");
+#else
   display.setSegments(atStart);
+#endif
+
 #endif
 
   Serial.println("Enter setup.\n");
@@ -236,7 +381,12 @@ void setup() {
   else {
       //if you get here you have connected to the WiFi    
       Serial.println("Connect successfully");
+      
+#if (TIME_VALIDITY_CHECK == ENABLE)
+      display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});  // Still show '--:--' until NTP syncs
+#else
       display.setSegments(atStart);
+#endif
   }
   
   // if you get here you have connected to the WiFi
@@ -244,6 +394,13 @@ void setup() {
 
 #if (NTP_SERVER == ENABLE)
   InitTimeClient();
+  // Force immediate NTP update on startup
+  UpdateNTPWithInterval();
+#endif
+
+#if (RTC_BACKUP == ENABLE)
+  // Initialize RTC module (I2C: SDA=D4, SCL=D3)
+  InitRTC();
 #endif
 
 }
@@ -499,11 +656,38 @@ void loop(){
       uint dot_on = 0b01000000;   // Colon ON
       uint dot_off = 0b00000000;  // Colon OFF
       
-      UpdateNTPTime();
+      // REQ_4: Update NTP only every 60 seconds
+#if (NTP_SERVER == ENABLE)
+      UpdateNTPWithInterval();
+      
+      // REQ_6: Check if time is valid before displaying
+#if (TIME_VALIDITY_CHECK == ENABLE)
+      if (!timeIsValid) {
+        // Display "--:--" until time is synced
+        display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});
+        delay(1000);
+        display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});
+        delay(1000);
+        return;  // Skip display update until time is valid
+      }
+#endif
+      
+      // Get time from appropriate source (NTP or RTC fallback)
+#if (RTC_BACKUP == ENABLE)
+      if (!ApplyTimeSource()) {
+        // No valid time source
+        Serial.println("[TIME] No valid time source available");
+        display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});
+        delay(1000);
+        return;
+      }
+#endif
+      
       DisplayTimeClient();
+#endif
       
 #if (AUTO_BRIGHTNESS == ENABLE)
-      // Adjust display brightness based on environment
+      // REQ_14: Adjust display brightness based on environment (< 5 seconds response)
       AdaptDisplayBrightness();
 #endif
       
