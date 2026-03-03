@@ -14,6 +14,7 @@
 #define WIFI_MANAGER          ENABLE
 #define NTP_SERVER            ENABLE    
 #define CLIENT_CTRL           DISABLE
+#define AUTO_BRIGHTNESS       ENABLE    // Enable automatic brightness adjustment
 
 // Set web server port number to 80
 WiFiServer wifi_server(80);
@@ -76,41 +77,94 @@ const uint8_t celsius[] = {
   SEG_A | SEG_D | SEG_E | SEG_F   // C
 };
 
-#define BRNS_VVHIGH 1000 // 1023 (10-bit ADC)
-#define BRNS_VHIGH  854
-#define BRNS_HIGH    708
-#define BRNS_NRML    562
-#define BRNS_LOW     416
-#define BRNS_VLOW 270
-#define BRNS_VVLOW 124
-#define BRNS_VV_HIGH 1000
+/* Brightness Adaptation Thresholds (LDR ADC values: 0-1023) */
+#define BRNS_VVHIGH 950   // Very very bright (< 50 ADC)
+#define BRNS_VHIGH  800   // Very bright (50-200 ADC)
+#define BRNS_HIGH   650   // Bright (200-350 ADC)
+#define BRNS_NRML   500   // Normal (350-500 ADC)
+#define BRNS_LOW    350   // Low light (500-650 ADC)
+#define BRNS_VLOW   200   // Very low light (650-800 ADC)
+#define BRNS_VVLOW  50    // Very very low light (800-973 ADC)
+/* ADC readings are inverted: Higher ADC = Darker environment */
 
+#define BRIGHTNESS_SMOOTHING 5  // Number of readings to average (reduces flickering)
+
+unsigned int lastBrightness = 0;
+unsigned int brightnessReadings[BRIGHTNESS_SMOOTHING] = {0};
+unsigned int readingIndex = 0;
+
+/**
+ * ReadEnvBrightness: Reads analog light sensor (LDR) value from A0
+ * Returns: ADC value (0-1023) with smoothing applied
+ * Note: Higher ADC value = Darker environment
+ */
 unsigned int ReadEnvBrightness()
 {
-  // return ADC value
-  return 0;
+  // Read analog value from LDR (connected to A0)
+  unsigned int adcValue = analogRead(A0);
+  
+  // Store reading in circular buffer for smoothing
+  brightnessReadings[readingIndex] = adcValue;
+  readingIndex = (readingIndex + 1) % BRIGHTNESS_SMOOTHING;
+  
+  // Calculate average of last BRIGHTNESS_SMOOTHING readings
+  unsigned long sum = 0;
+  for (int i = 0; i < BRIGHTNESS_SMOOTHING; i++) {
+    sum += brightnessReadings[i];
+  }
+  
+  return sum / BRIGHTNESS_SMOOTHING;
 }
 
+/**
+ * GetBrightnessLevel: Maps ADC value to display brightness level (0-7)
+ * Returns: Brightness level 0 (dimmest) to 7 (brightest)
+ */
+uint8_t GetBrightnessLevel(unsigned int adcValue)
+{
+  // ADC thresholds map to brightness levels
+  // Higher ADC = Darker = Need Higher Brightness
+  if (adcValue >= BRNS_VVHIGH) {
+    return 7;  // Very dark environment - maximum brightness
+  } else if (adcValue >= BRNS_VHIGH) {
+    return 6;  // Very low light
+  } else if (adcValue >= BRNS_HIGH) {
+    return 5;  // Low light
+  } else if (adcValue >= BRNS_NRML) {
+    return 4;  // Normal lighting
+  } else if (adcValue >= BRNS_LOW) {
+    return 3;  // Moderate light
+  } else if (adcValue >= BRNS_VLOW) {
+    return 2;  // Bright light
+  } else if (adcValue >= BRNS_VVLOW) {
+    return 1;  // Very bright light
+  } else {
+    return 0;  // Extremely bright - minimum brightness
+  }
+}
+
+/**
+ * AdaptDisplayBrightness: Adjusts TM1637 display brightness based on environment
+ * Automatically updates display brightness to match ambient light conditions
+ * Includes hysteresis to prevent flickering (only updates if change > threshold)
+ */
 void AdaptDisplayBrightness()
 {
-  // env_brightness = ReadEnvBrightness();
-  /*
-  if (env_brightness >= BRNS_VVHIGH) {
-    // 1
-  } else if (env_brightness < BRNS_VVHIGH) && (env_brightness >= BRNS_VHIGH) {
-    // 2
-  } else if (env_brightness < BRNS_VHIGH) && (env_brightness >= BRNS_HIGH) {
-    // 3
-  } else if (env_brightness < BRNS_HIGH) && (env_brightness >= BRNS_NRML) {
-    // 4
-  } else if (env_brightness < BRNS_NRML) && (env_brightness >= BRNS_LOW) {
-    // 5
-  } else if (env_brightness < BRNS_LOW) && (env_brightness >= BRNS_VVLOW) {
-    // 6
-  } else {
-    // 7
+  unsigned int currentADC = ReadEnvBrightness();
+  uint8_t currentBrightness = GetBrightnessLevel(currentADC);
+  
+  // Only update display if brightness level changed
+  // This prevents constant updates and flickering
+  if (currentBrightness != lastBrightness) {
+    display.setBrightness(currentBrightness, true);
+    lastBrightness = currentBrightness;
+    
+    // Optional: Log brightness changes to serial
+    Serial.print("Brightness adjusted: ADC=");
+    Serial.print(currentADC);
+    Serial.print(" Level=");
+    Serial.println(currentBrightness);
   }
-  */
 }
 
 #if (NTP_SERVER == ENABLE)
@@ -442,16 +496,26 @@ void loop(){
 //     Serial.println("");
 //   }
       uint hrs, time;
-      uint dot_on = 0b01000000;
-      uint dot_off = 0b00000000;
+      uint dot_on = 0b01000000;   // Colon ON
+      uint dot_off = 0b00000000;  // Colon OFF
+      
       UpdateNTPTime();
       DisplayTimeClient();
-      // display.showNumberDec(timeClient.getHours(),false,2,0);
-      // display.showNumberDec(timeClient.getMinutes(),false,2,2);
+      
+#if (AUTO_BRIGHTNESS == ENABLE)
+      // Adjust display brightness based on environment
+      AdaptDisplayBrightness();
+#endif
+      
+      // Display time with colon blinking
       hrs = timeClient.getHours() * 100;
       time = hrs + timeClient.getMinutes();
+      
+      // Show time with colon ON for 1 second
       display.showNumberDecEx(time, dot_on, true, 4, 0);
       delay(1000);
+      
+      // Show time with colon OFF for 1 second
       display.showNumberDecEx(time, dot_off, true, 4, 0);
       delay(1000);
 }
