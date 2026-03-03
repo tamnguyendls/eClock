@@ -30,6 +30,14 @@
    - Shows dashes until NTP first sync succeeds
    - Prevents displaying garbage/epoch time on startup
 
+[✅ NEW REQUIREMENT] [REQ_6.1] eClock shall display "--:--" and blink every 1 second during initial WiFi connection
+   - During startup: Display "--:--" on LED
+   - Behavior: LED blinks on/off every 1 second until WiFi connects
+   - Blink pattern: 1 second ON (dashes visible) → 1 second OFF (blank)
+   - Action on WiFi connected: Stop blinking and wait for NTP time sync
+   - Once time synced: Display HH:MM and continue normal operation
+   - Serial output: Log WiFi connection progress and time sync events
+
 [✅ COMPLETED] [ERQ_7] eClock must have Humidity & Temperature Sensor. This information shall be displayed for both Clock and Server page
    - DHT11/DHT22 sensor support (configurable)
    - DHT_PIN: D1 (GPIO5)

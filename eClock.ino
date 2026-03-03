@@ -47,6 +47,11 @@ unsigned long lastTempDisplayTime = 0;
 bool showingTemperature = false;
 #endif
 
+// REQ_6.1: Blinking display during initial WiFi connection
+bool isConnectingWiFi = true;           // Flag: Still waiting for WiFi connection
+unsigned long lastBlinkTime = 0;        // Timestamp of last blink toggle
+bool displayBlinkState = true;          // State: true = show dashes, false = blank
+
 // Auxiliar variables to store the current output state
 String output2State = "off";
 
@@ -451,6 +456,36 @@ void HandleDataDisplaySequence()
   }
 }
 
+/**
+ * HandleStartupBlinking: Blink "--:--" on LED while waiting for WiFi
+ * REQ_6.1: Display blinks every 1 second until WiFi connected
+ * Pattern: 1 second ON (dashes) → 1 second OFF (blank)
+ */
+void HandleStartupBlinking()
+{
+  if (!isConnectingWiFi) {
+    return;  // WiFi connected, stop blinking
+  }
+  
+  unsigned long currentTime = millis();
+  
+  // Toggle blink state every 1 second (1000ms)
+  if (currentTime - lastBlinkTime >= 1000) {
+    displayBlinkState = !displayBlinkState;  // Toggle between ON and OFF
+    lastBlinkTime = currentTime;
+    
+    if (displayBlinkState) {
+      // Show dashes
+      display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});
+      Serial.println("[STARTUP] Blinking display: ON (dashes visible)");
+    } else {
+      // Show blank
+      display.setSegments((uint8_t[]){0x00, 0x00, 0x00, 0x00});
+      Serial.println("[STARTUP] Blinking display: OFF (blank)");
+    }
+  }
+}
+
 #endif
 
 #if (NTP_SERVER == ENABLE)
@@ -675,10 +710,12 @@ void setup() {
       Serial.println("Connect failure");
       // ESP.restart();
       display.setSegments(allON);
+      isConnectingWiFi = true;  // Keep blinking on connection failure
   } 
   else {
       //if you get here you have connected to the WiFi    
       Serial.println("Connect successfully");
+      isConnectingWiFi = false;  // Stop blinking - WiFi is now connected
       
 #if (TIME_VALIDITY_CHECK == ENABLE)
       display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});  // Still show '--:--' until NTP syncs
@@ -1033,6 +1070,9 @@ void checkForControlFromClient(WiFiClient client) // if there's bytes to read fr
 
 void loop(){
 
+  // REQ_6.1: Handle startup blinking display while waiting for WiFi
+  HandleStartupBlinking();
+  
   // WiFiClient client = wifi_server.available();   // Listen for incoming clients
 
   // if (client) { 
