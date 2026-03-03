@@ -8,6 +8,7 @@
 #include <RTClib.h>              // https://github.com/adafruit/RTClib
 #include <EEPROM.h>              // Built-in: Store time when NTP syncs
 #include "wifi_setup.h"          // WiFi setup web interface HTML/CSS/JS
+#include <DHT.h>                 // https://github.com/adafruit/DHT-sensor-library (DHT11/DHT22)
 
 #define ENABLE  1
 #define DISABLE 0
@@ -21,12 +22,30 @@
 #define RTC_BACKUP            DISABLE   // RTC backup (DS3231 chip, optional hardware)
 #define EEPROM_FALLBACK       ENABLE    // EEPROM fallback (software-only, no hardware needed)
 #define TIME_VALIDITY_CHECK   ENABLE    // Display '--:--' until time is valid (REQ_6)
+#define DHT_SENSOR            ENABLE    // Enable DHT11/DHT22 humidity & temperature sensor (ERQ_7)
+
+// DHT Sensor Configuration
+#define DHT_PIN               D1        // GPIO5 (D1 on NodeMCU) - Data pin for DHT sensor
+#define DHT_TYPE              DHT11     // DHT11 or DHT22 - Change based on your sensor
+#define DHT_READ_INTERVAL     300000    // Read DHT every 5 minutes (REQ_12: every 5 mins)
+#define TEMP_DISPLAY_DURATION 10000     // Display temperature for 10 seconds (user requested 5-10 sec)
+#define TEMP_DISPLAY_INTERVAL 60000     // Show temperature every 60 seconds (1 minute)
 
 // Set web server port number to 80
 WiFiServer wifi_server(80);
 #define WIFI_LED      2 // GPIO2
 // Variable to store the HTTP request
 String header;
+
+// DHT Sensor Variables
+#if (DHT_SENSOR == ENABLE)
+DHT dht(DHT_PIN, DHT_TYPE);
+float lastHumidity = 0.0;
+float lastTemperature = 0.0;
+unsigned long lastDHTReadTime = 0;
+unsigned long lastTempDisplayTime = 0;
+bool showingTemperature = false;
+#endif
 
 // Auxiliar variables to store the current output state
 String output2State = "off";
@@ -244,6 +263,120 @@ void AdaptDisplayBrightness()
     Serial.println(currentBrightness);
   }
 }
+
+/* DHT Sensor - Humidity & Temperature (ERQ_7, REQ_12) ================================== */
+#if (DHT_SENSOR == ENABLE)
+/**
+ * InitDHTSensor: Initialize DHT sensor
+ * Must be called in setup()
+ */
+void InitDHTSensor()
+{
+  dht.begin();
+  Serial.println("[DHT] Humidity & Temperature Sensor initialized");
+}
+
+/**
+ * ReadDHTSensor: Read humidity and temperature from DHT sensor
+ * Reads every DHT_READ_INTERVAL (5 minutes per REQ_12)
+ * Returns: true if read successful, false if failed
+ */
+bool ReadDHTSensor()
+{
+  unsigned long currentTime = millis();
+  
+  // Only read if interval has passed
+  if (currentTime - lastDHTReadTime < DHT_READ_INTERVAL) {
+    return true;  // Return cached values
+  }
+  
+  // Read humidity
+  float humidity = dht.readHumidity();
+  
+  // Read temperature as Celsius
+  float temperature = dht.readTemperature();
+  
+  // Check if any reads failed
+  if (isnan(humidity) || isnan(temperature)) {
+    Serial.println("[DHT] Failed to read from DHT sensor!");
+    return false;
+  }
+  
+  // Store values
+  lastHumidity = humidity;
+  lastTemperature = temperature;
+  lastDHTReadTime = currentTime;
+  
+  // Log readings
+  Serial.print("[DHT] Temperature: ");
+  Serial.print(temperature);
+  Serial.print("°C, Humidity: ");
+  Serial.print(humidity);
+  Serial.println("%");
+  
+  return true;
+}
+
+/**
+ * DisplayTemperature: Show temperature on 7-segment display
+ * Format: "TTCC" where TT = temperature in Celsius (2 digits), CC = °C symbol
+ * Example: 25°C displays as "25" with degree symbol
+ */
+void DisplayTemperature()
+{
+  if (!ReadDHTSensor()) {
+    // If sensor read failed, show "-----"
+    Serial.println("[DHT] Cannot display temperature - sensor read failed");
+    display.setSegments(atStart);
+    return;
+  }
+  
+  // Display temperature as 2-digit number (e.g., 25 for 25°C)
+  int tempInt = (int)lastTemperature;
+  
+  // Ensure temperature is within displayable range (0-99)
+  if (tempInt < 0) tempInt = 0;
+  if (tempInt > 99) tempInt = 99;
+  
+  // Display temperature: Show as "TT " with colon separator (dot positions as indicator)
+  display.showNumberDec(tempInt, false, 2, 0);  // Show in first 2 digits
+  
+  // Optional: Show degree symbol in 3rd position
+  // This is a bit tricky with TM1637 - we can use custom segments
+  Serial.print("[DHT] Displaying: ");
+  Serial.print(tempInt);
+  Serial.println("°C");
+}
+
+/**
+ * HandleTemperatureDisplay: Manage temperature display rotation
+ * - Shows time normally
+ * - Switches to temperature every 60 seconds (TEMP_DISPLAY_INTERVAL)
+ * - Displays temperature for 10 seconds (TEMP_DISPLAY_DURATION)
+ * Call this in main loop
+ */
+void HandleTemperatureDisplay()
+{
+  unsigned long currentTime = millis();
+  
+  // Check if it's time to show temperature
+  if (!showingTemperature && (currentTime - lastTempDisplayTime >= TEMP_DISPLAY_INTERVAL)) {
+    showingTemperature = true;
+    lastTempDisplayTime = currentTime;
+    Serial.println("[DHT] Switching to temperature display");
+    DisplayTemperature();
+    return;
+  }
+  
+  // Check if it's time to return to time display
+  if (showingTemperature && (currentTime - lastTempDisplayTime >= TEMP_DISPLAY_DURATION)) {
+    showingTemperature = false;
+    Serial.println("[DHT] Switching back to time display");
+    return;
+  }
+}
+
+#endif
 
 #if (NTP_SERVER == ENABLE)
 void InitTimeClient()
@@ -493,6 +626,11 @@ void setup() {
   InitRTC();
 #endif
 
+#if (DHT_SENSOR == ENABLE)
+  // Initialize DHT sensor (Humidity & Temperature - ERQ_7)
+  InitDHTSensor();
+#endif
+
 }
 
 bool isClientConnected(WiFiClient client)
@@ -635,6 +773,15 @@ void loop(){
       // REQ_14: Adjust display brightness based on environment (< 5 seconds response)
       AdaptDisplayBrightness();
 #endif
+
+#if (DHT_SENSOR == ENABLE)
+      // ERQ_7, REQ_12: Handle temperature display rotation
+      // Reads temperature every 5 minutes, displays for 10 seconds every 60 seconds
+      HandleTemperatureDisplay();
+      
+      // If not showing temperature, display time normally
+      if (!showingTemperature) {
+#endif
       
       // Display time with colon blinking
       hrs = timeClient.getHours() * 100;
@@ -647,6 +794,10 @@ void loop(){
       // Show time with colon OFF for 1 second
       display.showNumberDecEx(time, dot_off, true, 4, 0);
       delay(1000);
+
+#if (DHT_SENSOR == ENABLE)
+      }  // End of !showingTemperature check
+#endif
 }
 
 #if (TEST_DISPLAY == ENABLE)
