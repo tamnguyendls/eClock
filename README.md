@@ -75,7 +75,7 @@ A dedicated hardware reset button will be added to the board. Pressing and holdi
 
 - Clears saved WiFi credentials
 - Clears saved timezone setting
-- Restarts board and re-enters hotspot mode (`eClock_AP`)
+- Restarts board and re-enters AP mode (`eClock_AP`)
 
 After factory reset, repeat from **Step 2** to reconfigure.
 
@@ -100,6 +100,7 @@ The WiFi setup page will include a **timezone selector** after the password fiel
 | UTC-5 (US Eastern) | -18000 |
 
 Until this feature is implemented, timezone is set at compile time in `eClock.ino`:
+
 ```cpp
 #define UTC_PLUS_7  25200   // change this value to your offset
 ```

@@ -92,5 +92,20 @@
    - Stores credentials persistently in flash
    - Automatic reconnection on power loss
 
+[❌ NOT IMPLEMENTED] [REQ_16] eClock shall have a hardware reset button for factory reset
+   - A dedicated physical button (GPIO pin, active LOW with internal pull-up)
+   - Press and hold for 3 seconds to trigger factory reset
+   - Factory reset shall erase: WiFi credentials, saved timezone offset
+   - After reset: restart board and re-enter AP mode ("eClock_AP") for reconfiguration
+   - Display shall show visual feedback during hold (e.g. countdown on LED)
+
+[❌ NOT IMPLEMENTED] [REQ_17] eClock shall allow timezone configuration via WiFi setup page
+   - Timezone offset selector added to WiFi setup page (after password field)
+   - User selects UTC offset (e.g. UTC+7, UTC+8) before submitting
+   - Selected offset saved to flash (EEPROM/Preferences) on submission
+   - Saved offset loaded on every boot and applied to NTP time display
+   - Timezone setting is cleared when factory reset (REQ_16) is performed
+   - Default offset: UTC+7 (25200 seconds) if no value saved in flash
+
 
 
