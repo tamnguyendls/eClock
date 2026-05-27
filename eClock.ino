@@ -123,7 +123,7 @@ String currentLine = "";                // make a String to hold incoming data f
 #define UTC_PLUS_7  25200
 #define NTP_UPDATE_INTERVAL 60000  // Update NTP every 60 seconds (REQ_4)
 const long utcOffsetInSeconds = UTC_PLUS_7;
-char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+const char daysOfTheWeek[7][12] PROGMEM = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 /* Define NTP Client to get time */
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
@@ -517,11 +517,13 @@ void HandleStartupBlinking()
     
     if (displayBlinkState) {
       // Show dashes
-      display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});
+      static const uint8_t dashSegs[] = {0x40, 0x40, 0x40, 0x40};
+      display.setSegments(dashSegs);
       LOG_DEBUG("[STARTUP] Blinking display: ON (dashes visible)");
     } else {
       // Show blank
-      display.setSegments((uint8_t[]){0x00, 0x00, 0x00, 0x00});
+      static const uint8_t blankSegs[] = {0x00, 0x00, 0x00, 0x00};
+      display.setSegments(blankSegs);
       LOG_DEBUG("[STARTUP] Blinking display: OFF (blank)");
     }
   }
@@ -705,21 +707,21 @@ void setup() {
   
   // REQ_6: Show "--:--" while waiting for time
 #if (TIME_VALIDITY_CHECK == ENABLE)
-  display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});  // Display dashes
-  LOG_INFO("[DISPLAY] Showing '--:--' (waiting for time)");
+  { static const uint8_t dashSegs[] = {0x40, 0x40, 0x40, 0x40}; display.setSegments(dashSegs); }  // Display dashes
+  LOG_INFO(F("[DISPLAY] Showing '--:--' (waiting for time)"));
 #else
   display.setSegments(atStart);
 #endif
 
 #endif
 
-  LOG_INFO("Enter setup.");
+  LOG_INFO(F("Enter setup."));
   Serial.begin(115200);
   
   // Initialize EEPROM for time fallback storage
 #if (EEPROM_FALLBACK == ENABLE)
   EEPROM.begin(EEPROM_SIZE);
-  LOG_INFO("[EEPROM] Initialized for time fallback storage");
+  LOG_INFO(F("[EEPROM] Initialized for time fallback storage"));
 #endif
   
   // Initialize the output variables as outputs
@@ -736,18 +738,16 @@ void setup() {
 
   res = wm.autoConnect("eClock_AP");
   if(!res) {
-      LOG_WARN("[WiFi] Connect failure");
-      // ESP.restart();
+      LOG_WARN(F("[WiFi] Connect failure"));
       display.setSegments(allON);
-      isConnectingWiFi = true;  // Keep blinking on connection failure
-  } 
+      isConnectingWiFi = true;
+  }
   else {
-      //if you get here you have connected to the WiFi    
-      LOG_INFO("[WiFi] Connect successfully");
+      LOG_INFO(F("[WiFi] Connect successfully"));
       isConnectingWiFi = false;  // Stop blinking - WiFi is now connected
       
 #if (TIME_VALIDITY_CHECK == ENABLE)
-      display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});  // Still show '--:--' until NTP syncs
+      { static const uint8_t dashSegs[] = {0x40, 0x40, 0x40, 0x40}; display.setSegments(dashSegs); }  // Still show '--:--' until NTP syncs
 #else
       display.setSegments(atStart);
 #endif
@@ -1099,32 +1099,8 @@ void checkForControlFromClient(WiFiClient client) // if there's bytes to read fr
 
 void loop(){
 
-  // REQ_6.1: Handle startup blinking display while waiting for WiFi
   HandleStartupBlinking();
-  
-  // WiFiClient client = wifi_server.available();   // Listen for incoming clients
 
-  // if (client) { 
-    // Serial.println("\nNew Client.");          // print a message out in the serial port
-
-    // if (isClientConnected(client)) {            // loop while the client's connected
-//     digitalWrite(output2, HIGH);
-//     Serial.println("Connected.");
-// #if (CLIENT_CTRL == ENABLE)
-//       checkForControlFromClient(client);
-// #endif
-//       UpdateNTPTime();
-//       DisplayTimeClient();
-//     } else {
-//       digitalWrite(output2, LOW);
-//     }
-//     // Clear the header variable
-//     header = "";
-//     // Close the connection
-//     client.stop();
-//     Serial.println("Client disconnected.");
-//     Serial.println("");
-//   }
       uint hrs, time;
       uint dot_on = 0b01000000;   // Colon ON
       uint dot_off = 0b00000000;  // Colon OFF
@@ -1137,9 +1113,9 @@ void loop(){
 #if (TIME_VALIDITY_CHECK == ENABLE)
       if (!timeIsValid) {
         // Display "--:--" until time is synced
-        display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});
+        { static const uint8_t dashSegs[] = {0x40, 0x40, 0x40, 0x40}; display.setSegments(dashSegs); }
         delay(1000);
-        display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});
+        { static const uint8_t dashSegs2[] = {0x40, 0x40, 0x40, 0x40}; display.setSegments(dashSegs2); }
         delay(1000);
         return;  // Skip display update until time is valid
       }
@@ -1150,7 +1126,7 @@ void loop(){
       if (!ApplyTimeSource()) {
         // No valid time source
         LOG_ERROR("[TIME] No valid time source available");
-        display.setSegments((uint8_t[]){0x40, 0x40, 0x40, 0x40});
+        display.setSegments(atStart);
         delay(1000);
         return;
       }
