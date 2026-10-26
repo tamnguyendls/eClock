@@ -1,10 +1,14 @@
-#include <ESP8266WiFi.h>
+/* eClock variant: ESP32-C3 + 8x32 WS2812 RGB LED matrix (branch ESP32-C3-WS2812-Clock)
+   Same configuration as the ESP8266/TM1637 version; only the board and display differ.
+   Board: "ESP32C3 Dev Module" (enable "USB CDC On Boot" for Serial over native USB). */
+#include <WiFi.h>
 #include <DNSServer.h>
-#include <ESP8266WebServer.h>
+#include <WebServer.h>
 #include <WiFiManager.h>         // https://github.com/tzapu/WiFiManager
 #include <NTPClient.h>
 #include <WiFiUdp.h>
-#include <TM1637Display.h>
+#include <Adafruit_NeoPixel.h>   // https://github.com/adafruit/Adafruit_NeoPixel (WS2812 matrix)
+#include <Wire.h>
 #include <RTClib.h>              // https://github.com/adafruit/RTClib
 #include <EEPROM.h>              // Built-in: Store time when NTP syncs
 #include "wifi_setup.h"          // WiFi setup web interface HTML/CSS/JS
@@ -73,8 +77,14 @@
 #define TIME_VALIDITY_CHECK   ENABLE    // Display '--:--' until time is valid (REQ_6)
 #define DHT_SENSOR            ENABLE    // Enable DHT11/DHT22 humidity & temperature sensor (ERQ_7)
 
+/* ESP32-C3 pin map (avoid strapping pins GPIO2/8/9; GPIO18/19 are USB D-/D+) */
+#define MATRIX_PIN            7         // WS2812 matrix DIN
+#define LDR_PIN               3         // LDR divider (ADC1_CH3)
+#define RTC_SDA_PIN           5         // DS3231 SDA
+#define RTC_SCL_PIN           6         // DS3231 SCL
+
 // DHT Sensor Configuration
-#define DHT_PIN               D1        // GPIO5 (D1 on NodeMCU) - Data pin for DHT sensor
+#define DHT_PIN               10        // GPIO10 - Data pin for DHT sensor
 #define DHT_TYPE              DHT11     // DHT11 or DHT22 - Change based on your sensor
 #define DHT_READ_INTERVAL     300000    // Read DHT every 5 minutes (REQ_12: every 5 mins)
 #define TEMP_DISPLAY_DURATION 10000     // Display temperature for 10 seconds (user requested 5-10 sec)
@@ -82,7 +92,7 @@
 
 // Set web server port number to 80
 WiFiServer wifi_server(80);
-#define WIFI_LED      2 // GPIO2
+#define WIFI_LED      8 // GPIO8 (on-board LED on most ESP32-C3 boards)
 // Variable to store the HTTP request
 String header;
 
@@ -105,7 +115,7 @@ bool displayBlinkState = true;          // State: true = show dashes, false = bl
 String output2State = "off";
 
 // Assign output variables to GPIO pins
-const int output2 = 2;
+const int output2 = WIFI_LED;
 
 String currentLine = "";                // make a String to hold incoming data from the client
 
@@ -197,37 +207,174 @@ time_t GetEEPROMTime()
 
 #endif
 
-/* RTC Module - DS3231 (I2C: SDA=D4, SCL=D3) ============================================= */
+/* RTC Module - DS3231 (I2C: SDA=GPIO5, SCL=GPIO6) ====================================== */
 #if (RTC_BACKUP == ENABLE)
 RTC_DS3231 rtc;
 bool rtcAvailable = false;  // Flag: RTC module found on I2C bus
 #endif
-// Define the connections pins
-const int CLK = D6; //Set the CLK pin connection to the display
-const int DIO = D5; //Set the DIO pin connection to the display
 
-// Create a display object of type TM1637Display
-TM1637Display display(CLK, DIO);
+/* WS2812 8x32 LED Matrix ===================================================================== */
+#define MATRIX_WIDTH          32
+#define MATRIX_HEIGHT         8
+#define MATRIX_NUM_LEDS       (MATRIX_WIDTH * MATRIX_HEIGHT)
 
-// Create an array that turns all segments ON
-const uint8_t allON[] = {0xff, 0xff, 0xff, 0xff};
+/* Wiring layout of the panel - adjust if text appears mirrored or scrambled.
+   Common 8x32 panels: column-major, serpentine (zig-zag), first LED at top-left. */
+#define MATRIX_COLUMN_MAJOR   ENABLE    // LEDs chained down columns (DISABLE = along rows)
+#define MATRIX_SERPENTINE     ENABLE    // Every other column/row runs in reverse
+#define MATRIX_FLIP_X         DISABLE   // Mirror horizontally
+#define MATRIX_FLIP_Y         DISABLE   // Mirror vertically
 
-// Create an array that turns all segments OFF
-const uint8_t allOFF[] = {0x00, 0x00, 0x00, 0x00};
-const uint8_t atStart[] = {0x40, 0x40, 0x40, 0x40};
-// Create an array that sets individual segments per digit to display the word "dOnE"
-const uint8_t done[] = {
-  SEG_B | SEG_C | SEG_D | SEG_E | SEG_G,           // d
-  SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,   // O
-  SEG_C | SEG_E | SEG_G,                           // n
-  SEG_A | SEG_D | SEG_E | SEG_F | SEG_G            // E
+/* Brightness levels 0-7 (same scale as TM1637) mapped to NeoPixel brightness 0-255.
+   Kept low on purpose: 256 LEDs at full white can draw >10A. */
+const uint8_t MATRIX_LEVELS[8] = {2, 4, 8, 14, 22, 32, 48, 64};
+
+/* Colors (0xRRGGBB) */
+#define COLOR_TIME            0xFF8000  // Orange
+#define COLOR_TEMP            0xFF2000  // Red-orange
+#define COLOR_HUMIDITY        0x0080FF  // Blue
+#define COLOR_DASH            0x00FF40  // Green
+#define COLOR_ERROR           0xFF0000  // Red
+
+Adafruit_NeoPixel matrix(MATRIX_NUM_LEDS, MATRIX_PIN, NEO_GRB + NEO_KHZ800);
+
+/* 5x7 font: rows top->bottom, bit (width-1) = leftmost column. '*' renders as degree sign. */
+struct Glyph {
+  char c;
+  uint8_t width;
+  uint8_t rows[7];
 };
 
-// Create degree celsius symbol
-const uint8_t celsius[] = {
-  SEG_A | SEG_B | SEG_F | SEG_G,  // Degree symbol
-  SEG_A | SEG_D | SEG_E | SEG_F   // C
+const Glyph FONT[] = {
+  {'0', 5, {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}},
+  {'1', 5, {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E}},
+  {'2', 5, {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}},
+  {'3', 5, {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E}},
+  {'4', 5, {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}},
+  {'5', 5, {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E}},
+  {'6', 5, {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}},
+  {'7', 5, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}},
+  {'8', 5, {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}},
+  {'9', 5, {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}},
+  {'-', 5, {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}},
+  {'C', 5, {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}},
+  {'%', 5, {0x18, 0x19, 0x02, 0x04, 0x08, 0x13, 0x03}},
+  {'*', 3, {0x02, 0x05, 0x02, 0x00, 0x00, 0x00, 0x00}},  // Degree sign
+  {':', 1, {0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00}},
+  {' ', 1, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},  // Same width as ':' so colon blink doesn't shift digits
 };
+#define FONT_Y_OFFSET 0  // Top row of glyphs (font is 7 rows on an 8-row panel)
+
+#define FONT_COUNT (sizeof(FONT) / sizeof(FONT[0]))
+
+/* Returns index into FONT, or -1 if unsupported (int, not Glyph*, so Arduino's
+   auto-generated prototypes don't reference Glyph before it is declared) */
+int FindGlyph(char c)
+{
+  for (uint8_t i = 0; i < FONT_COUNT; i++) {
+    if (FONT[i].c == c) return i;
+  }
+  return -1;
+}
+
+/**
+ * MatrixXY: Convert (x, y) to LED index according to the panel wiring layout
+ */
+uint16_t MatrixXY(uint8_t x, uint8_t y)
+{
+#if (MATRIX_FLIP_X == ENABLE)
+  x = MATRIX_WIDTH - 1 - x;
+#endif
+#if (MATRIX_FLIP_Y == ENABLE)
+  y = MATRIX_HEIGHT - 1 - y;
+#endif
+#if (MATRIX_COLUMN_MAJOR == ENABLE)
+#if (MATRIX_SERPENTINE == ENABLE)
+  if (x & 1) y = MATRIX_HEIGHT - 1 - y;
+#endif
+  return x * MATRIX_HEIGHT + y;
+#else
+#if (MATRIX_SERPENTINE == ENABLE)
+  if (y & 1) x = MATRIX_WIDTH - 1 - x;
+#endif
+  return y * MATRIX_WIDTH + x;
+#endif
+}
+
+void MatrixInit()
+{
+  matrix.begin();
+  matrix.setBrightness(MATRIX_LEVELS[7]);
+  matrix.clear();
+  matrix.show();
+}
+
+/**
+ * MatrixSetLevel: Set brightness using the TM1637-style 0-7 scale
+ */
+void MatrixSetLevel(uint8_t level)
+{
+  if (level > 7) level = 7;
+  matrix.setBrightness(MATRIX_LEVELS[level]);
+  matrix.show();  // Re-push current frame at the new brightness
+}
+
+void MatrixClear()
+{
+  matrix.clear();
+  matrix.show();
+}
+
+/**
+ * MatrixDrawText: Clear the panel and draw text horizontally centered, 1px between glyphs
+ * Supported chars: 0-9 - C % * (degree) : and space
+ */
+void MatrixDrawText(const char* text, uint32_t color)
+{
+  // Measure total width
+  int width = 0;
+  for (const char* p = text; *p; p++) {
+    int idx = FindGlyph(*p);
+    if (idx >= 0) width += FONT[idx].width + 1;
+  }
+  if (width > 0) width--;  // No gap after last glyph
+
+  int x = (MATRIX_WIDTH - width) / 2;
+  if (x < 0) x = 0;
+
+  matrix.clear();
+  for (const char* p = text; *p; p++) {
+    int idx = FindGlyph(*p);
+    if (idx < 0) continue;
+    const Glyph* g = &FONT[idx];
+    for (uint8_t row = 0; row < 7; row++) {
+      for (uint8_t col = 0; col < g->width; col++) {
+        if (g->rows[row] & (1 << (g->width - 1 - col))) {
+          int px = x + col;
+          if (px >= 0 && px < MATRIX_WIDTH) {
+            matrix.setPixelColor(MatrixXY(px, row + FONT_Y_OFFSET), color);
+          }
+        }
+      }
+    }
+    x += g->width + 1;
+  }
+  matrix.show();
+}
+
+/* Show "--:--" (waiting for time / no valid time) */
+void MatrixShowDashes()
+{
+  MatrixDrawText("--:--", COLOR_DASH);
+}
+
+/* Show HH:MM with colon on or off */
+void MatrixShowTime(uint8_t hours, uint8_t minutes, bool colonOn)
+{
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%02u%c%02u", hours, colonOn ? ':' : ' ', minutes);
+  MatrixDrawText(buf, COLOR_TIME);
+}
 
 /* Brightness Adaptation Thresholds (LDR ADC values: 0-1023) */
 #define BRNS_VVHIGH 950   // Very very bright (< 50 ADC)
@@ -246,14 +393,14 @@ unsigned int brightnessReadings[BRIGHTNESS_SMOOTHING] = {0};
 unsigned int readingIndex = 0;
 
 /**
- * ReadEnvBrightness: Reads analog light sensor (LDR) value from A0
+ * ReadEnvBrightness: Reads analog light sensor (LDR) value from LDR_PIN
  * Returns: ADC value (0-1023) with smoothing applied
  * Note: Higher ADC value = Darker environment
  */
 unsigned int ReadEnvBrightness()
 {
-  // Read analog value from LDR (connected to A0)
-  unsigned int adcValue = analogRead(A0);
+  // Read analog value from LDR (ADC resolution set to 10 bits in setup to keep the 0-1023 thresholds)
+  unsigned int adcValue = analogRead(LDR_PIN);
   
   // Store reading in circular buffer for smoothing
   brightnessReadings[readingIndex] = adcValue;
@@ -296,7 +443,7 @@ uint8_t GetBrightnessLevel(unsigned int adcValue)
 }
 
 /**
- * AdaptDisplayBrightness: Adjusts TM1637 display brightness based on environment
+ * AdaptDisplayBrightness: Adjusts LED matrix brightness based on environment
  * Automatically updates display brightness to match ambient light conditions
  * Includes hysteresis to prevent flickering (only updates if change > threshold)
  */
@@ -308,7 +455,7 @@ void AdaptDisplayBrightness()
   // Only update display if brightness level changed
   // This prevents constant updates and flickering
   if (currentBrightness != lastBrightness) {
-    display.setBrightness(currentBrightness, true);
+    MatrixSetLevel(currentBrightness);
     lastBrightness = currentBrightness;
     
     // Optional: Log brightness changes to serial
@@ -366,16 +513,16 @@ bool ReadDHTSensor()
 }
 
 /**
- * DisplayTemperature: Show temperature on 7-segment display
- * Format: "TTCC" where TT = temperature in Celsius (2 digits), CC = °C symbol
- * Example: 25°C displays as "25" with degree symbol
+ * DisplayTemperature: Show temperature on LED matrix
+ * Format: "TT°C" where TT = temperature in Celsius (2 digits)
+ * Example: 25°C displays as "25°C"
  */
 void DisplayTemperature()
 {
   if (!ReadDHTSensor()) {
-    // If sensor read failed, show "-----"
+    // If sensor read failed, show "--:--"
     LOG_ERROR("[DHT] Cannot display temperature - sensor read failed");
-    display.setSegments(atStart);
+    MatrixShowDashes();
     return;
   }
   
@@ -386,25 +533,25 @@ void DisplayTemperature()
   if (tempInt < 0) tempInt = 0;
   if (tempInt > 99) tempInt = 99;
   
-  // Display temperature: Show as "TT " with colon separator (dot positions as indicator)
-  display.showNumberDec(tempInt, false, 2, 0);  // Show in first 2 digits
-  
-  // Optional: Show degree symbol in 3rd position
-  // This is a bit tricky with TM1637 - we can use custom segments
+  // Display temperature with degree sign and C
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%d*C", tempInt);
+  MatrixDrawText(buf, COLOR_TEMP);
+
   LOG_INFOF("[DHT] Displaying: %d°C", tempInt);
 }
 
 /**
- * DisplayHumidity: Show humidity on 7-segment display
+ * DisplayHumidity: Show humidity on LED matrix
  * Format: "HH%" where HH = humidity percentage (2 digits)
- * Example: 65% displays as "65"
+ * Example: 65% displays as "65%"
  */
 void DisplayHumidity()
 {
   if (!ReadDHTSensor()) {
     // If sensor read failed, show dashes
     Serial.println("[DHT] Cannot display humidity - sensor read failed");
-    display.setSegments(atStart);
+    MatrixShowDashes();
     return;
   }
   
@@ -415,8 +562,10 @@ void DisplayHumidity()
   if (humidInt < 0) humidInt = 0;
   if (humidInt > 99) humidInt = 99;
   
-  // Display humidity: Show as "HH"
-  display.showNumberDec(humidInt, false, 2, 0);  // Show in first 2 digits
+  // Display humidity: Show as "HH%"
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%d%%", humidInt);
+  MatrixDrawText(buf, COLOR_HUMIDITY);
   
   Serial.print("[DHT] Displaying: ");
   Serial.print(humidInt);
@@ -517,13 +666,11 @@ void HandleStartupBlinking()
     
     if (displayBlinkState) {
       // Show dashes
-      static const uint8_t dashSegs[] = {0x40, 0x40, 0x40, 0x40};
-      display.setSegments(dashSegs);
+      MatrixShowDashes();
       LOG_DEBUG("[STARTUP] Blinking display: ON (dashes visible)");
     } else {
       // Show blank
-      static const uint8_t blankSegs[] = {0x00, 0x00, 0x00, 0x00};
-      display.setSegments(blankSegs);
+      MatrixClear();
       LOG_DEBUG("[STARTUP] Blinking display: OFF (blank)");
     }
   }
@@ -609,6 +756,7 @@ bool UpdateNTPWithInterval()
  */
 void InitRTC()
 {
+  Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
   if (!rtc.begin()) {
     LOG_WARN("[RTC] DS3231 RTC not found on I2C bus");
     rtcAvailable = false;
@@ -617,7 +765,7 @@ void InitRTC()
     rtcAvailable = true;
     
     // Set RTC time from NTP if RTC time is not set
-    if (!rtc.isrunning()) {
+    if (rtc.lostPower()) {
       LOG_WARN("[RTC] RTC not running, setting time from NTP...");
       // Will be synced after NTP updates in first loop
     }
@@ -645,7 +793,7 @@ void SyncRTCFromNTP()
   time_t ntpTime = timeClient.getEpochTime();
   
   // Only sync on 1st of month or if RTC is not running
-  if (rtc.isrunning() == false || timeClient.getDate() == 1) {
+  if (rtc.lostPower() || DateTime(ntpTime).day() == 1) {
     rtc.adjust(DateTime(ntpTime));
     LOG_INFO("[RTC] Time synchronized from NTP");
     lastRTCSync = millis();
@@ -684,7 +832,7 @@ bool ApplyTimeSource()
 #if (EEPROM_FALLBACK == ENABLE)
     time_t eepromTime = GetEEPROMTime();
     if (eepromTime > 0) {
-      LOG_INFOF("[EEPROM] Using fallback time (elapsed since sync): %lu", eepromTime);
+      LOG_INFOF("[EEPROM] Using fallback time (elapsed since sync): %lu", (unsigned long)eepromTime);
       return true;
     }
 #endif
@@ -699,24 +847,30 @@ bool ApplyTimeSource()
 void setup() {
   bool res;
 
+  Serial.begin(115200);
+
 #if (LED_DISPLAY == ENABLE)
   // Display set up
-  display.clear();
+  MatrixInit();
   delay(100);
-  display.setBrightness(7);
-  
+  MatrixSetLevel(7);
+
   // REQ_6: Show "--:--" while waiting for time
 #if (TIME_VALIDITY_CHECK == ENABLE)
-  { static const uint8_t dashSegs[] = {0x40, 0x40, 0x40, 0x40}; display.setSegments(dashSegs); }  // Display dashes
+  MatrixShowDashes();
   LOG_INFO(F("[DISPLAY] Showing '--:--' (waiting for time)"));
 #else
-  display.setSegments(atStart);
+  MatrixShowDashes();
 #endif
 
+#endif
+
+#if (AUTO_BRIGHTNESS == ENABLE)
+  // ESP32-C3 ADC is 12-bit by default; use 10-bit so BRNS_* thresholds (0-1023) stay the same
+  analogReadResolution(10);
 #endif
 
   LOG_INFO(F("Enter setup."));
-  Serial.begin(115200);
   
   // Initialize EEPROM for time fallback storage
 #if (EEPROM_FALLBACK == ENABLE)
@@ -739,18 +893,14 @@ void setup() {
   res = wm.autoConnect("eClock_AP");
   if(!res) {
       LOG_WARN(F("[WiFi] Connect failure"));
-      display.setSegments(allON);
+      MatrixDrawText("88:88", COLOR_ERROR);  // All segments on, in red
       isConnectingWiFi = true;
   }
   else {
       LOG_INFO(F("[WiFi] Connect successfully"));
       isConnectingWiFi = false;  // Stop blinking - WiFi is now connected
       
-#if (TIME_VALIDITY_CHECK == ENABLE)
-      { static const uint8_t dashSegs[] = {0x40, 0x40, 0x40, 0x40}; display.setSegments(dashSegs); }  // Still show '--:--' until NTP syncs
-#else
-      display.setSegments(atStart);
-#endif
+      MatrixShowDashes();  // Still show '--:--' until NTP syncs
   }
   
   // if you get here you have connected to the WiFi
@@ -763,7 +913,7 @@ void setup() {
 #endif
 
 #if (RTC_BACKUP == ENABLE)
-  // Initialize RTC module (I2C: SDA=D4, SCL=D3)
+  // Initialize RTC module (I2C: SDA=GPIO5, SCL=GPIO6)
   InitRTC();
 #endif
 
@@ -1072,7 +1222,7 @@ void checkForControlFromClient(WiFiClient client) // if there's bytes to read fr
           networksJson += "{\"ssid\":\"" + WiFi.SSID(i) + "\"";
           networksJson += ",\"rssi\":" + String(WiFi.RSSI(i));
           networksJson += ",\"channel\":" + String(WiFi.channel(i));
-          networksJson += ",\"secure\":" + (WiFi.encryptionType(i) != ENC_TYPE_NONE ? "true" : "false");
+          networksJson += ",\"secure\":" + String(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "true" : "false");
           networksJson += "}";
         }
         networksJson += "]";
@@ -1101,10 +1251,6 @@ void loop(){
 
   HandleStartupBlinking();
 
-      uint hrs, time;
-      uint dot_on = 0b01000000;   // Colon ON
-      uint dot_off = 0b00000000;  // Colon OFF
-      
       // REQ_4: Update NTP only every 60 seconds
 #if (NTP_SERVER == ENABLE)
       UpdateNTPWithInterval();
@@ -1113,10 +1259,8 @@ void loop(){
 #if (TIME_VALIDITY_CHECK == ENABLE)
       if (!timeIsValid) {
         // Display "--:--" until time is synced
-        { static const uint8_t dashSegs[] = {0x40, 0x40, 0x40, 0x40}; display.setSegments(dashSegs); }
-        delay(1000);
-        { static const uint8_t dashSegs2[] = {0x40, 0x40, 0x40, 0x40}; display.setSegments(dashSegs2); }
-        delay(1000);
+        MatrixShowDashes();
+        delay(2000);
         return;  // Skip display update until time is valid
       }
 #endif
@@ -1126,7 +1270,7 @@ void loop(){
       if (!ApplyTimeSource()) {
         // No valid time source
         LOG_ERROR("[TIME] No valid time source available");
-        display.setSegments(atStart);
+        MatrixShowDashes();
         delay(1000);
         return;
       }
@@ -1150,15 +1294,12 @@ void loop(){
 #endif
       
       // Display time with colon blinking
-      hrs = timeClient.getHours() * 100;
-      time = hrs + timeClient.getMinutes();
-      
       // Show time with colon ON for 1 second
-      display.showNumberDecEx(time, dot_on, true, 4, 0);
+      MatrixShowTime(timeClient.getHours(), timeClient.getMinutes(), true);
       delay(1000);
-      
+
       // Show time with colon OFF for 1 second
-      display.showNumberDecEx(time, dot_off, true, 4, 0);
+      MatrixShowTime(timeClient.getHours(), timeClient.getMinutes(), false);
       delay(1000);
 
 #if (DHT_SENSOR == ENABLE)
@@ -1171,24 +1312,10 @@ void test_display() {
   int numCounter = 0;
   for(numCounter = 0; numCounter < 40; numCounter++) //Iterate numCounter
   {
-    if ((numCounter >= 0)&& (numCounter < 5)){
-      display.setBrightness(0);
-    } else if ((numCounter >= 5)&& (numCounter < 10)) {
-      display.setBrightness(1);
-    } else if ((numCounter >= 10)&& (numCounter < 15)) {
-      display.setBrightness(2);
-    } else if ((numCounter >= 15)&& (numCounter < 20)) {
-      display.setBrightness(3);
-    } else if ((numCounter >= 20)&& (numCounter < 25)) {
-      display.setBrightness(4);
-    } else if ((numCounter >= 25)&& (numCounter < 30)) {
-      display.setBrightness(5);
-    } else if ((numCounter >= 30)&& (numCounter < 35)) {
-      display.setBrightness(6);
-    } else {
-      display.setBrightness(7);
-    }
-    display.showNumberDec(numCounter); //Display the numCounter value;
+    MatrixSetLevel(numCounter / 5);  // Levels 0-7, 5 seconds each
+    char buf[4];
+    snprintf(buf, sizeof(buf), "%d", numCounter);
+    MatrixDrawText(buf, COLOR_TIME); //Display the numCounter value;
     delay(1000);
   }
 }
