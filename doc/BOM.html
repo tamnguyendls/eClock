@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eClock Bill of Materials</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --text: #1f2430; --muted: #5d6578;
+    --border: #dde1ea; --accent: #5b5bd6; --head: #eef0fa;
+    --req: #1b7f4b; --req-bg: #e3f5ea; --opt: #9a6700; --opt-bg: #fff3d6;
+    --warn-bg: #fff3d6; --warn-border: #e0b84a; --code: #eef0f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161d; --card: #1d2029; --text: #e6e8ee; --muted: #9aa2b5;
+      --border: #333847; --accent: #8c8cf0; --head: #262a38;
+      --req: #6bd39b; --req-bg: #1c3a2b; --opt: #f0c35a; --opt-bg: #3a3118;
+      --warn-bg: #3a3118; --warn-border: #7a6420; --code: #262a38;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 1000px; margin: 0 auto; padding: 32px 16px 56px; }
+  h1 { margin: 0 0 4px; font-size: 28px; }
+  h2 { margin: 36px 0 12px; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  nav { margin: 0 0 20px; font-size: 14px; }
+  nav a { color: var(--accent); text-decoration: none; margin-right: 16px; }
+  nav a:hover { text-decoration: underline; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 720px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--head); font-size: 13px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  td.n, td.q { text-align: center; white-space: nowrap; }
+  td.part { font-weight: 600; min-width: 170px; }
+  .tag { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 99px; }
+  .tag.req { color: var(--req); background: var(--req-bg); }
+  .tag.opt { color: var(--opt); background: var(--opt-bg); }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  a { color: var(--accent); }
+  .note { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 8px; padding: 12px 14px; margin-top: 16px; }
+  ul { padding-left: 20px; }
+  @media print {
+    body { background: #fff; color: #000; }
+    .card, .note { border-color: #999; }
+    nav { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <nav><a href="WIRING_GUIDE.html">Wiring guide &rarr;</a></nav>
+  <h1>eClock Bill of Materials</h1>
+  <p class="sub">Parts needed to build one eClock. Prices are not listed because they vary by region and supplier.</p>
+
+  <h2>Core parts <span class="tag req">Required</span></h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>#</th><th>Part</th><th>Qty</th><th>Spec / notes</th><th>Used for</th></tr></thead>
+      <tbody>
+        <tr><td class="n">1</td><td class="part">ESP8266 NodeMCU dev board</td><td class="q">1</td>
+          <td>NodeMCU V3 (ESP-12E/F, CP2102 or CH340 USB-UART). Use a board with the on-board A0 voltage divider (standard NodeMCU) so A0 accepts 0&ndash;3.3&nbsp;V.</td>
+          <td>MCU, WiFi, NTP</td></tr>
+        <tr><td class="n">2</td><td class="part">TM1637 4-digit 7-segment display module</td><td class="q">1</td>
+          <td>0.56&Prime; <strong>clock type with the colon (<code>:</code>) segment</strong>. Plain 4-digit modules without a colon connection cannot blink the colon.</td>
+          <td>Time / temp / humidity display</td></tr>
+        <tr><td class="n">3</td><td class="part">LDR (photoresistor)</td><td class="q">1</td>
+          <td>GL5516 or similar (about 5&nbsp;k&Omega;&ndash;200&nbsp;k&Omega;).</td>
+          <td>Auto-brightness (REQ_13/14)</td></tr>
+        <tr><td class="n">4</td><td class="part">Resistor 10&nbsp;k&Omega;, &frac14;&nbsp;W, 5%</td><td class="q">1</td>
+          <td>Fixed leg of the LDR voltage divider.</td>
+          <td>Auto-brightness</td></tr>
+        <tr><td class="n">5</td><td class="part">DHT11 sensor, 3-pin module</td><td class="q">1</td>
+          <td>Matches <code>DHT_TYPE DHT11</code> in firmware. A DHT22 also works; change <code>DHT_TYPE</code> to <code>DHT22</code>. The 3-pin module has the pull-up on board.</td>
+          <td>Temp / humidity (ERQ_7, REQ_12)</td></tr>
+        <tr><td class="n">6</td><td class="part">Micro-USB cable (data-capable)</td><td class="q">1</td>
+          <td>For flashing and power.</td><td>Power, programming</td></tr>
+        <tr><td class="n">7</td><td class="part">USB 5&nbsp;V power adapter</td><td class="q">1</td>
+          <td>5&nbsp;V, at least 1&nbsp;A.</td><td>Power</td></tr>
+        <tr><td class="n">8</td><td class="part">Breadboard (830 point) or perfboard</td><td class="q">1</td>
+          <td>Prototype first, solder later.</td><td>Assembly</td></tr>
+        <tr><td class="n">9</td><td class="part">Jumper wires, dupont</td><td class="q">1 set</td>
+          <td>Male-male for breadboard; female-female or female-male for modules with header pins.</td><td>Wiring</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Optional parts <span class="tag opt">Optional</span></h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>#</th><th>Part</th><th>Qty</th><th>Spec / notes</th><th>Used for</th></tr></thead>
+      <tbody>
+        <tr><td class="n">10</td><td class="part">DS3231 RTC module (I2C)</td><td class="q">1</td>
+          <td>ZS-042 or similar. Needs <code>RTC_BACKUP</code> set to <code>ENABLE</code> and a firmware change (see <a href="WIRING_GUIDE.html#rtc">wiring guide</a>).</td>
+          <td>Time fallback when WiFi is lost (REQ_5, ERQ_10, REQ_11)</td></tr>
+        <tr><td class="n">11</td><td class="part">CR2032 coin cell</td><td class="q">1</td>
+          <td>Keeps RTC time through power loss. On ZS-042 modules, see the charging warning in the wiring guide.</td>
+          <td>RTC backup power</td></tr>
+        <tr><td class="n">12</td><td class="part">Capacitor 0.1&nbsp;&micro;F (100&nbsp;nF) ceramic</td><td class="q">1</td>
+          <td>Across the LDR to GND to reduce brightness flicker (suggested in <code>AUTO_BRIGHTNESS_GUIDE.md</code>).</td>
+          <td>Noise filtering</td></tr>
+        <tr><td class="n">13</td><td class="part">Resistor 4.7&nbsp;k&Omega;&ndash;10&nbsp;k&Omega;</td><td class="q">1</td>
+          <td>Only if you use a <strong>bare 4-pin DHT</strong> instead of the 3-pin module: pull-up from DATA to 3.3&nbsp;V.</td>
+          <td>DHT data line</td></tr>
+        <tr><td class="n">14</td><td class="part">Enclosure / diffuser</td><td class="q">1</td>
+          <td>Cut a window for the display and a small hole for the LDR. Keep the DHT out of heat from the board, otherwise it reads high.</td>
+          <td>Housing</td></tr>
+        <tr><td class="n">15</td><td class="part">Push button</td><td class="q">1</td>
+          <td>Not used by the current firmware. Reserved for REQ_16 (factory reset), which is not implemented.</td>
+          <td>Future</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Not included</h2>
+  <ul>
+    <li><strong>Radar (RCWL-0516, ERQ_8)</strong> and <strong>LDS sensor (ERQ_9)</strong> are not implemented in firmware, so they are not in this BOM.</li>
+  </ul>
+
+  <h2>Software / libraries</h2>
+  <p>Vendored as zips in <code>Lib/</code>: Adafruit_BusIO, Adafruit_Sensor, DHT-sensor-library, RTClib, TM1637, WiFiManager. NTPClient must be installed separately. Board support: ESP8266 core for Arduino IDE.</p>
+</main>
+</body>
+</html>

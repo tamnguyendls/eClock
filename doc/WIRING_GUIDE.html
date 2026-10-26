@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eClock Wiring Guide</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --text: #1f2430; --muted: #5d6578;
+    --border: #dde1ea; --accent: #5b5bd6; --head: #eef0fa; --code: #eef0f5;
+    --warn-bg: #fff3d6; --warn-border: #e0b84a; --bad-bg: #fde8e8; --bad-border: #e08a8a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161d; --card: #1d2029; --text: #e6e8ee; --muted: #9aa2b5;
+      --border: #333847; --accent: #8c8cf0; --head: #262a38; --code: #262a38;
+      --warn-bg: #3a3118; --warn-border: #7a6420; --bad-bg: #3d1f21; --bad-border: #8a3f43;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 900px; margin: 0 auto; padding: 32px 16px 56px; }
+  h1 { margin: 0 0 4px; font-size: 28px; }
+  h2 { margin: 40px 0 12px; font-size: 21px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { margin: 28px 0 8px; font-size: 17px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  nav { margin: 0 0 20px; font-size: 14px; }
+  nav a, a { color: var(--accent); }
+  nav a { text-decoration: none; margin-right: 16px; }
+  nav a:hover { text-decoration: underline; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; min-width: 560px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--head); font-size: 13px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre {
+    background: var(--code); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; font: 13px/1.35 ui-monospace, Consolas, "Courier New", monospace;
+  }
+  pre code { background: none; padding: 0; }
+  .note, .warn { border-radius: 8px; padding: 12px 14px; margin: 14px 0; border: 1px solid; }
+  .note { background: var(--warn-bg); border-color: var(--warn-border); }
+  .warn { background: var(--bad-bg); border-color: var(--bad-border); }
+  ul, ol { padding-left: 22px; }
+  li { margin: 3px 0; }
+  .pill { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 99px; background: var(--warn-bg); border: 1px solid var(--warn-border); margin-left: 8px; vertical-align: middle; }
+  @media print {
+    body { background: #fff; color: #000; }
+    .card, .note, .warn, pre { border-color: #999; }
+    nav { display: none; }
+    pre { white-space: pre-wrap; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <nav><a href="BOM.html">&larr; Bill of materials</a></nav>
+  <h1>eClock Wiring Guide</h1>
+  <p class="sub">All modules run from the NodeMCU <strong>3V3</strong> rail. Wire with the board <strong>unplugged</strong> from USB.</p>
+
+  <h2>Pin map <small style="font-weight:400;color:var(--muted)">(matches <code>eClock.ino</code>)</small></h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>Module</th><th>Module pin</th><th>NodeMCU pin</th><th>GPIO</th><th>Defined in firmware</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="4"><strong>TM1637 display</strong></td><td>VCC</td><td>3V3</td><td>&mdash;</td><td>&mdash;</td></tr>
+        <tr><td>GND</td><td>GND</td><td>&mdash;</td><td>&mdash;</td></tr>
+        <tr><td>CLK</td><td><strong>D6</strong></td><td>GPIO12</td><td><code>const int CLK = D6</code></td></tr>
+        <tr><td>DIO</td><td><strong>D5</strong></td><td>GPIO14</td><td><code>const int DIO = D5</code></td></tr>
+        <tr><td rowspan="3"><strong>DHT11 / DHT22</strong></td><td>VCC (+)</td><td>3V3</td><td>&mdash;</td><td>&mdash;</td></tr>
+        <tr><td>DATA (S/OUT)</td><td><strong>D1</strong></td><td>GPIO5</td><td><code>#define DHT_PIN D1</code></td></tr>
+        <tr><td>GND (&minus;)</td><td>GND</td><td>&mdash;</td><td>&mdash;</td></tr>
+        <tr><td><strong>LDR divider</strong></td><td>middle point</td><td><strong>A0</strong></td><td>ADC0</td><td><code>analogRead(A0)</code></td></tr>
+        <tr><td><strong>Status LED</strong></td><td>on-board</td><td>&mdash;</td><td>GPIO2</td><td><code>WIFI_LED 2</code> (active LOW, no wiring needed)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Step by step</h2>
+
+  <h3>1. TM1637 display</h3>
+<pre><code> TM1637 module             NodeMCU
+ ┌─────────┐
+ │ CLK ────┼──────────────► D6
+ │ DIO ────┼──────────────► D5
+ │ VCC ────┼──────────────► 3V3
+ │ GND ────┼──────────────► GND
+ └─────────┘</code></pre>
+  <ul>
+    <li>Do not swap CLK and DIO. A swap shows a blank display.</li>
+    <li>The display can also run from <strong>VIN (5&nbsp;V)</strong> for a brighter output; the 3.3&nbsp;V logic levels from the ESP8266 normally still work. Use 3V3 if unsure.</li>
+  </ul>
+
+  <h3>2. DHT11 / DHT22</h3>
+<pre><code> DHT module (3-pin)        NodeMCU
+ ┌─────────┐
+ │ DATA ───┼──────────────► D1
+ │ VCC  ───┼──────────────► 3V3
+ │ GND  ───┼──────────────► GND
+ └─────────┘</code></pre>
+  <ul>
+    <li>Check the silkscreen: pin order differs between module makers (<code>S + −</code>, <code>+ OUT −</code>, or <code>DATA VCC GND</code>).</li>
+    <li>Bare 4-pin DHT: pin 1 VCC, pin 2 DATA, pin 3 not connected, pin 4 GND. Add a 4.7&ndash;10&nbsp;k&Omega; resistor between DATA and 3V3.</li>
+    <li>Run the DHT from <strong>3V3</strong> so its data line never exceeds the ESP8266 limit.</li>
+  </ul>
+
+  <h3>3. LDR (auto-brightness)</h3>
+  <p>The firmware treats <strong>a higher ADC value as darker</strong> (<code>adc ≥ 950</code> &rarr; brightness 7). That requires the LDR on the <strong>ground side</strong> of the divider:</p>
+<pre><code> 3V3 ────┬──────────────────
+         │
+       10 kΩ
+         │
+         ├────────────────── A0
+         │
+        LDR (GL5516)        optional: 0.1 µF cap from A0 to GND
+         │
+ GND ────┴──────────────────</code></pre>
+  <div class="card">
+    <table style="min-width:480px">
+      <thead><tr><th>Light</th><th>LDR resistance</th><th>Voltage at A0</th><th>ADC</th><th>Display brightness</th></tr></thead>
+      <tbody>
+        <tr><td>Dark</td><td>high</td><td>high</td><td>high (&ge; 950)</td><td>7 (max)</td></tr>
+        <tr><td>Bright</td><td>low</td><td>low</td><td>low (&lt; 50)</td><td>0 (min)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note"><strong>Note:</strong> <code>doc/AUTO_BRIGHTNESS_GUIDE.md</code> draws the LDR on the 3.3&nbsp;V side with the 10&nbsp;k&Omega; resistor to GND. That arrangement reverses the behavior (display dims in the dark). Use the wiring above, or swap the two parts' positions if you prefer the guide's layout and then invert the logic in firmware.</div>
+  <ul>
+    <li>The NodeMCU's on-board divider scales A0 to a 0&ndash;3.3&nbsp;V input. Do not feed more than 3.3&nbsp;V into A0. On a bare ESP-12 module without that divider, the limit is 1&nbsp;V.</li>
+    <li>Place the LDR where it sees room light but not the display's own glow, or the brightness will oscillate.</li>
+  </ul>
+
+  <h3 id="rtc">Optional: DS3231 RTC <span class="pill">disabled by default</span></h3>
+  <p>RTC support is disabled by default (<code>RTC_BACKUP DISABLE</code>), and the existing wiring documentation does not work with the current firmware:</p>
+  <ul>
+    <li><code>RTC_SETUP_GUIDE.md</code> says SDA=D4, SCL=D3, and labels D4 as GPIO4. On NodeMCU, <strong>D4 is GPIO2</strong> and <strong>D3 is GPIO0</strong>. These are boot-strap pins. GPIO2 is also the on-board LED, and <code>setup()</code> drives it as an output.</li>
+    <li>The code never calls <code>Wire.begin()</code>, so the I2C bus uses the ESP8266 defaults: SDA=D2 (GPIO4), SCL=D1 (GPIO5). D1 is the DHT data pin.</li>
+  </ul>
+  <p>Recommended wiring, which needs one firmware change:</p>
+<pre><code> DS3231 module             NodeMCU
+ ┌─────────┐
+ │ SDA ────┼──────────────► D2  (GPIO4)
+ │ SCL ────┼──────────────► D7  (GPIO13)
+ │ VCC ────┼──────────────► 3V3
+ │ GND ────┼──────────────► GND
+ └─────────┘</code></pre>
+  <p>Firmware change (not yet made): call <code>Wire.begin(D2, D7);</code> before <code>rtc.begin()</code> in <code>InitRTC()</code>, then set <code>RTC_BACKUP</code> to <code>ENABLE</code>. D2 and D7 are free in the current pin map and not boot-strap pins.</p>
+  <ul>
+    <li>Power the module from <strong>3V3</strong>, not 5&nbsp;V.</li>
+    <li>ZS-042 modules have a charging circuit meant for a rechargeable LIR2032. With a non-rechargeable <strong>CR2032</strong>, remove the charging diode or resistor on the module, or use an LIR2032.</li>
+  </ul>
+
+  <h2>Complete pin summary</h2>
+  <div class="card">
+    <table style="min-width:480px">
+      <thead><tr><th>NodeMCU</th><th>GPIO</th><th>Connected to</th></tr></thead>
+      <tbody>
+        <tr><td>D1</td><td>5</td><td>DHT DATA</td></tr>
+        <tr><td>D2</td><td>4</td><td>DS3231 SDA (optional, needs firmware change)</td></tr>
+        <tr><td>D5</td><td>14</td><td>TM1637 DIO</td></tr>
+        <tr><td>D6</td><td>12</td><td>TM1637 CLK</td></tr>
+        <tr><td>D7</td><td>13</td><td>DS3231 SCL (optional, needs firmware change)</td></tr>
+        <tr><td>A0</td><td>ADC0</td><td>LDR divider</td></tr>
+        <tr><td>3V3</td><td>&mdash;</td><td>TM1637 VCC, DHT VCC, LDR divider top, DS3231 VCC</td></tr>
+        <tr><td>GND</td><td>&mdash;</td><td>All module grounds, LDR divider bottom</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="warn">Avoid D3 (GPIO0), D4 (GPIO2) and D8 (GPIO15): they set the boot mode, and a wrong level at power-up stops the board from starting or flashing.</div>
+
+  <h2>Checks after wiring</h2>
+  <ol>
+    <li>Plug in USB. The display shows blinking <code>--:--</code> while it waits for WiFi (see <code>README.md</code> for first-time setup).</li>
+    <li>Open the serial monitor at 115200 baud and look for <code>[INFO]</code> lines from NTP, DHT and brightness.</li>
+    <li>Cover the LDR. The display should get brighter. If it dims instead, the divider is wired the other way round.</li>
+    <li>A DHT read error in the log usually means a swapped pin or no pull-up on a bare sensor.</li>
+  </ol>
+</main>
+</body>
+</html>
