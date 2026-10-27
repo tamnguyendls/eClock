@@ -42,6 +42,7 @@ Wiring:
 
 - Built-in 5x7 font (no Adafruit_GFX needed), text centered on the 32-column panel.
 - Time: `HH:MM` in orange with a blinking colon. Temperature: `25°C` in red-orange. Humidity: `65%` in blue. Waiting for time: `--:--` in green. WiFi failure: `88:88` in red.
+- Minute change: changed digits roll (old digit slides up, new one rises from below, ease-in-out, `FLIP_DURATION` = 300 ms). Disable with `FLIP_ANIMATION DISABLE`. No animation when returning from the temperature/humidity screens.
 - Colors: `COLOR_*` defines. Brightness: the 0–7 levels from `GetBrightnessLevel()` map to `MATRIX_LEVELS[]`.
 - `analogReadResolution(10)` keeps the ADC at 0–1023, so the `BRNS_*` thresholds stay the same as on the ESP8266.
 

@@ -28,7 +28,7 @@ There is no build system, test suite, or linter. Everything is built with the Ar
 
 **Display state machine.** `HandleDataDisplaySequence()` rotates `DISPLAY_STATE_TIME → TEMP → HUMIDITY` (`TEMP_DISPLAY_INTERVAL`/`TEMP_DISPLAY_DURATION`); DHT is read every `DHT_READ_INTERVAL` (5 min) with cached values.
 
-**Display (matrix).** No GFX library: a small 5x7 `FONT[]` table (digits, `-`, `C`, `%`, `*`=degree, `:`, space) drawn by `MatrixDrawText()` centered on 32 columns. `MatrixXY()` maps x/y to LED index per `MATRIX_COLUMN_MAJOR`/`MATRIX_SERPENTINE`/`MATRIX_FLIP_*`. Wrappers `MatrixShowDashes/ShowTime/Clear/SetLevel` replace the old TM1637 calls; per-state colors are `COLOR_*`.
+**Display (matrix).** No GFX library: a small 5x7 `FONT[]` table (digits, `-`, `C`, `%`, `*`=degree, `:`, space) drawn by `MatrixDrawText()` centered on 32 columns. `MatrixXY()` maps x/y to LED index per `MATRIX_COLUMN_MAJOR`/`MATRIX_SERPENTINE`/`MATRIX_FLIP_*`. Wrappers `MatrixShowDashes/ShowTime/Clear/SetLevel` replace the old TM1637 calls; per-state colors are `COLOR_*`. `FLIP_ANIMATION` (`FLIP_DURATION` ms): `MatrixShowTime()` tracks `lastShownTime` (HHMM on panel, reset to -1 by `MatrixDrawText`/`MatrixClear`) and, when the minute changes, `MatrixAnimateTime()` rolls only the changed digits (blocking, ease-in-out, drawn via `DrawGlyphClipped`). `loop()` subtracts the time spent drawing from each 1 s colon delay.
 
 **Brightness.** `ReadEnvBrightness()` smooths the LDR on `LDR_PIN` (`BRIGHTNESS_SMOOTHING` samples; `analogReadResolution(10)` keeps 0–1023), `GetBrightnessLevel()` maps ADC thresholds (`BRNS_*`) to levels 0–7, and `MatrixSetLevel()` maps those through `MATRIX_LEVELS[]` (capped at 64/255 for PSU safety).
 

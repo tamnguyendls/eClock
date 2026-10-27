@@ -76,6 +76,8 @@
 #define EEPROM_FALLBACK       ENABLE    // EEPROM fallback (software-only, no hardware needed)
 #define TIME_VALIDITY_CHECK   ENABLE    // Display '--:--' until time is valid (REQ_6)
 #define DHT_SENSOR            ENABLE    // Enable DHT11/DHT22 humidity & temperature sensor (ERQ_7)
+#define FLIP_ANIMATION        ENABLE    // Roll changed digits (old up/out, new in from below) when the minute changes
+#define FLIP_DURATION         300       // Animation length (ms)
 
 /* ESP32-C3 pin map (avoid strapping pins GPIO2/8/9; GPIO18/19 are USB D-/D+) */
 #define MATRIX_PIN            7         // WS2812 matrix DIN
@@ -263,7 +265,15 @@ const Glyph FONT[] = {
   {':', 1, {0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00}},
   {' ', 1, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},  // Same width as ':' so colon blink doesn't shift digits
 };
+#define FONT_HEIGHT   7
 #define FONT_Y_OFFSET 0  // Top row of glyphs (font is 7 rows on an 8-row panel)
+
+/* "HH:MM" layout: 4 digits (5px) + colon (1px) + 4 gaps = 25px, centered like MatrixDrawText() */
+#define TIME_X0       ((MATRIX_WIDTH - 25) / 2)
+const uint8_t TIME_DIGIT_X[4] = {0, 6, 14, 20};  // Relative to TIME_X0
+#define TIME_COLON_X  12
+
+int lastShownTime = -1;  // HHMM currently on the panel, -1 if something else is shown
 
 #define FONT_COUNT (sizeof(FONT) / sizeof(FONT[0]))
 
@@ -321,8 +331,31 @@ void MatrixSetLevel(uint8_t level)
 
 void MatrixClear()
 {
+  lastShownTime = -1;
   matrix.clear();
   matrix.show();
+}
+
+/**
+ * DrawGlyphClipped: Draw FONT[idx] at x, shifted vertically by yShift,
+ * clipped to the font rows (0..FONT_HEIGHT-1). Does not call show().
+ */
+void DrawGlyphClipped(int idx, int x, int yShift, uint32_t color)
+{
+  if (idx < 0) return;
+  const Glyph* g = &FONT[idx];
+  for (uint8_t row = 0; row < FONT_HEIGHT; row++) {
+    int y = row + yShift;
+    if (y < 0 || y >= FONT_HEIGHT) continue;
+    for (uint8_t col = 0; col < g->width; col++) {
+      if (g->rows[row] & (1 << (g->width - 1 - col))) {
+        int px = x + col;
+        if (px >= 0 && px < MATRIX_WIDTH) {
+          matrix.setPixelColor(MatrixXY(px, y + FONT_Y_OFFSET), color);
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -331,6 +364,8 @@ void MatrixClear()
  */
 void MatrixDrawText(const char* text, uint32_t color)
 {
+  lastShownTime = -1;  // Panel no longer shows a known time (disables flip on next time draw)
+
   // Measure total width
   int width = 0;
   for (const char* p = text; *p; p++) {
@@ -346,18 +381,8 @@ void MatrixDrawText(const char* text, uint32_t color)
   for (const char* p = text; *p; p++) {
     int idx = FindGlyph(*p);
     if (idx < 0) continue;
-    const Glyph* g = &FONT[idx];
-    for (uint8_t row = 0; row < 7; row++) {
-      for (uint8_t col = 0; col < g->width; col++) {
-        if (g->rows[row] & (1 << (g->width - 1 - col))) {
-          int px = x + col;
-          if (px >= 0 && px < MATRIX_WIDTH) {
-            matrix.setPixelColor(MatrixXY(px, row + FONT_Y_OFFSET), color);
-          }
-        }
-      }
-    }
-    x += g->width + 1;
+    DrawGlyphClipped(idx, x, 0, color);
+    x += FONT[idx].width + 1;
   }
   matrix.show();
 }
@@ -368,12 +393,66 @@ void MatrixShowDashes()
   MatrixDrawText("--:--", COLOR_DASH);
 }
 
-/* Show HH:MM with colon on or off */
+#if (FLIP_ANIMATION == ENABLE)
+/**
+ * MatrixAnimateTime: Roll changed digits from oldTime to newTime (HHMM)
+ * Old digit moves up and out, new digit enters from below (1px gap), ease-in-out.
+ * Blocks for FLIP_DURATION ms; unchanged digits and the colon stay still.
+ */
+void MatrixAnimateTime(int oldTime, int newTime, bool colonOn)
+{
+  const int divisors[4] = {1000, 100, 10, 1};
+  int oldIdx[4], newIdx[4];
+  for (uint8_t i = 0; i < 4; i++) {
+    oldIdx[i] = FindGlyph('0' + (oldTime / divisors[i]) % 10);
+    newIdx[i] = FindGlyph('0' + (newTime / divisors[i]) % 10);
+  }
+
+  unsigned long start = millis();
+  while (true) {
+    float t = (float)(millis() - start) / FLIP_DURATION;
+    if (t > 1.0f) t = 1.0f;
+    float p = (t < 0.5f) ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);  // Ease-in-out
+    int dy = (int)(p * (FONT_HEIGHT + 1) + 0.5f);
+
+    matrix.clear();
+    for (uint8_t i = 0; i < 4; i++) {
+      int x = TIME_X0 + TIME_DIGIT_X[i];
+      if (oldIdx[i] == newIdx[i]) {
+        DrawGlyphClipped(newIdx[i], x, 0, COLOR_TIME);
+      } else {
+        DrawGlyphClipped(oldIdx[i], x, -dy, COLOR_TIME);
+        DrawGlyphClipped(newIdx[i], x, FONT_HEIGHT + 1 - dy, COLOR_TIME);
+      }
+    }
+    if (colonOn) {
+      DrawGlyphClipped(FindGlyph(':'), TIME_X0 + TIME_COLON_X, 0, COLOR_TIME);
+    }
+    matrix.show();
+
+    if (t >= 1.0f) break;  // Last frame already shows the new digits exactly
+    delay(16);
+  }
+}
+#endif
+
+/* Show HH:MM with colon on or off (rolls changed digits if FLIP_ANIMATION is enabled) */
 void MatrixShowTime(uint8_t hours, uint8_t minutes, bool colonOn)
 {
+  int hhmm = hours * 100 + minutes;
+
+#if (FLIP_ANIMATION == ENABLE)
+  if (lastShownTime >= 0 && lastShownTime != hhmm) {
+    MatrixAnimateTime(lastShownTime, hhmm, colonOn);
+    lastShownTime = hhmm;
+    return;
+  }
+#endif
+
   char buf[8];
   snprintf(buf, sizeof(buf), "%02u%c%02u", hours, colonOn ? ':' : ' ', minutes);
   MatrixDrawText(buf, COLOR_TIME);
+  lastShownTime = hhmm;
 }
 
 /* Brightness Adaptation Thresholds (LDR ADC values: 0-1023) */
@@ -1294,13 +1373,20 @@ void loop(){
 #endif
       
       // Display time with colon blinking
+      // Each half lasts 1 second including any flip animation inside MatrixShowTime()
+      unsigned long frameStart = millis();
+      unsigned long spent;
+
       // Show time with colon ON for 1 second
       MatrixShowTime(timeClient.getHours(), timeClient.getMinutes(), true);
-      delay(1000);
+      spent = millis() - frameStart;
+      if (spent < 1000) delay(1000 - spent);
 
       // Show time with colon OFF for 1 second
+      frameStart = millis();
       MatrixShowTime(timeClient.getHours(), timeClient.getMinutes(), false);
-      delay(1000);
+      spent = millis() - frameStart;
+      if (spent < 1000) delay(1000 - spent);
 
 #if (DHT_SENSOR == ENABLE)
       }  // End of currentDisplayState == DISPLAY_STATE_TIME check
